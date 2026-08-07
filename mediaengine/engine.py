@@ -16,7 +16,7 @@ import threading
 from collections.abc import Sequence
 from datetime import timedelta
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from .config import Config, load_config
 from .core.control import CancelToken, ProgressCallback
@@ -25,6 +25,10 @@ from .db.connection import Database
 from .db.repositories import Repositories
 from .errors import NotFoundError
 from .util import setup_logging, utcnow, utcnow_iso
+
+if TYPE_CHECKING:  # pragma: no cover - the facade stays cheap to import
+    from .plugins import BackfillResult, PluginRegistry
+    from .search import Query, SearchResult
 
 __all__ = ["MediaEngine"]
 
@@ -53,9 +57,11 @@ class MediaEngine:
             )
         self._db: Database | None = None
         self._repos: Repositories | None = None
+        self._registry: Any | None = None
         self._lock = threading.Lock()
         self._started = False
         self._cancel = CancelToken()
+        self._registry: "PluginRegistry | None" = None
 
     # ── lifecycle ───────────────────────────────────────────────────────────
 
@@ -92,6 +98,8 @@ class MediaEngine:
                 self._db.close()
             self._db = None
             self._repos = None
+            self._registry = None
+            self._registry = None
             self._started = False
 
     def __enter__(self) -> "MediaEngine":
@@ -133,7 +141,8 @@ class MediaEngine:
         """Index one or more directory trees. Blocks until finished."""
         self.start()
         pipeline = IngestPipeline(
-            self.config, self.repos, progress=progress, cancel=cancel or self._cancel
+            self.config, self.repos, progress=progress,
+            cancel=self._cancel if cancel is None else cancel,
         )
         return pipeline.scan(
             list(roots) if roots else None,
@@ -152,8 +161,46 @@ class MediaEngine:
         """A pipeline for single-asset operations (reindex, rebuild)."""
         self.start()
         return IngestPipeline(
-            self.config, self.repos, progress=progress, cancel=cancel or self._cancel
+            self.config, self.repos, progress=progress,
+            cancel=self._cancel if cancel is None else cancel,
         )
+
+    # ── plugins and search ──────────────────────────────────────────────────
+
+    @property
+    def plugins(self) -> "PluginRegistry":
+        """The plugin registry, discovering on first access."""
+        from .plugins import PluginRegistry
+
+        self.start()
+        if self._registry is None:
+            self._registry = PluginRegistry(self.config, self.repos)
+            self._registry.discover()
+        return self._registry
+
+    def backfill(
+        self,
+        plugin_ids: Sequence[str] | None = None,
+        *,
+        limit: int | None = None,
+        progress: ProgressCallback | None = None,
+    ) -> "BackfillResult":
+        """Run analyzers over the library via the task queue. Blocks."""
+        from .plugins import PluginRunner
+
+        runner = PluginRunner(
+            self.config, self.repos, self.plugins, progress=progress, cancel=self._cancel
+        )
+        return runner.run(list(plugin_ids) if plugin_ids else None, limit=limit)
+
+    def search(self, query: "Query | str", *, with_facets: bool = True) -> "SearchResult":
+        """Execute a search; accepts a Query or the shared string syntax."""
+        from .search import Query, SearchPlanner, parse_query
+
+        self.start()
+        parsed = parse_query(query) if isinstance(query, str) else query
+        assert isinstance(parsed, Query)  # noqa: S101 - narrows the union for mypy
+        return SearchPlanner(self.repos).search(parsed, with_facets=with_facets)
 
     # ── reads ───────────────────────────────────────────────────────────────
 

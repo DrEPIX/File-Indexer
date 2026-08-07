@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from pathlib import Path
+import time
 
 from fastapi.testclient import TestClient
+from PIL import Image
 
 from mediaengine.api import create_app
 from mediaengine.config import Config
@@ -50,6 +52,9 @@ def test_health_auth_surface_and_asset(tmp_path: Path) -> None:
             detail = client.get("/api/assets/1", headers=headers)
             assert detail.status_code == 200
             assert detail.json()["asset"]["media_type"] == "image"
+            plugins = client.get("/api/plugins", headers=headers)
+            assert plugins.status_code == 200, plugins.text
+            assert isinstance(plugins.json(), list)
     finally:
         engine.close()
 
@@ -134,5 +139,54 @@ def test_search_rejects_unimplemented_vector_similarity(tmp_path: Path) -> None:
             )
             assert response.status_code == 422
             assert "vector" in response.json()["detail"]
+    finally:
+        engine.close()
+
+
+def test_background_scan_to_search_user_journey(tmp_path: Path) -> None:
+    library = tmp_path / "library"
+    library.mkdir()
+    Image.new("RGB", (48, 32), "cornflowerblue").save(library / "First Test Photo.png")
+
+    config = Config()
+    config.storage.db_path = tmp_path / "journey.db"
+    config.storage.derivatives_path = tmp_path / "derivatives"
+    config.logging.file = None
+    config.api.auth_token = "test-token-123456"
+    engine = MediaEngine(config).start()
+    app = create_app(
+        config,
+        engine=engine,
+        sheet_path=Path(__file__).parents[1] / "qol_contract" / "change_sheet.toml",
+    )
+    headers = {"Authorization": "Bearer test-token-123456"}
+    try:
+        with TestClient(app) as client:
+            started = client.post(
+                "/api/scan",
+                headers=headers,
+                json={"roots": [str(library)], "generate_derivatives": False},
+            )
+            assert started.status_code == 202, started.text
+            job_id = started.json()["id"]
+            job = started.json()
+            deadline = time.monotonic() + 10
+            while job["state"] not in {"done", "failed", "cancelled"}:
+                assert time.monotonic() < deadline, job
+                time.sleep(0.02)
+                response = client.get(f"/api/jobs/{job_id}", headers=headers)
+                assert response.status_code == 200
+                job = response.json()
+            assert job["state"] == "done", job
+            assert job["result"][0]["files_new"] == 1
+
+            found = client.post(
+                "/api/search",
+                headers=headers,
+                json={"query": '"First Test" type:image', "include_facets": True},
+            )
+            assert found.status_code == 200, found.text
+            assert found.json()["total"] == 1
+            assert found.json()["items"][0]["filename"] == "First Test Photo.png"
     finally:
         engine.close()

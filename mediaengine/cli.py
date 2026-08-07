@@ -246,6 +246,85 @@ def cmd_info(args: argparse.Namespace, engine: "MediaEngine") -> int:
     return 0
 
 
+def cmd_search(args: argparse.Namespace, engine: "MediaEngine") -> int:
+    from .search import parse_query
+
+    query = parse_query(" ".join(args.terms), limit=args.limit, offset=args.offset)
+    result = engine.search(query, with_facets=not args.no_facets)
+    if args.json:
+        _print(dict(result), as_json=True)
+        return 0
+
+    print(f"{result.total:,} match(es) in {result.get('took_ms')}ms")
+    for item in result.hits:
+        captured = (item.get("captured_at") or "")[:10]
+        dims = ""
+        if item.get("width") and item.get("height"):
+            dims = f" {item['width']}x{item['height']}"
+        print(
+            f"  #{item['id']:<6} {item['media_type']:<9} {captured:<11}"
+            f"{(item.get('filename') or '?'):<40}{dims}"
+        )
+    facets = result.get("facets") or {}
+    if facets:
+        print("\nfacets (add key:value to filter)")
+        for namespace, values in facets.items():
+            rendered = "  ".join(f"{v['label']}({v['count']})" for v in values[:8])
+            print(f"  {namespace:<18} {rendered}")
+    return 0
+
+
+def cmd_backfill(args: argparse.Namespace, engine: "MediaEngine") -> int:
+    printer = _ProgressPrinter(enabled=not args.quiet)
+    try:
+        result = engine.backfill(args.plugin or None, limit=args.limit, progress=printer)
+    finally:
+        printer.finish()
+    if args.json:
+        _print(result.as_dict(), as_json=True)
+        return 0
+    print(f"enqueued    {result.enqueued:,}")
+    print(f"completed   {result.completed:,}")
+    print(f"failed      {result.failed:,}")
+    print(f"skipped     {result.skipped:,}")
+    print(f"annotations {result.annotations_written:,}")
+    if result.blocked_by_user:
+        print(f"blocked     {result.blocked_by_user:,} (user data outranks plugins)")
+    for plugin_id, counts in sorted(result.by_plugin.items()):
+        print(f"  {plugin_id:<26} done={counts['done']} failed={counts['failed']} "
+              f"annotations={counts['annotations']}")
+    return 1 if result.failed else 0
+
+
+def cmd_plugins(args: argparse.Namespace, engine: "MediaEngine") -> int:
+    rows = engine.plugins.describe()
+    if args.json:
+        _print(rows, as_json=True)
+        return 0
+    if not rows:
+        print("no plugins discovered")
+        return 0
+    for row in rows:
+        state = "enabled" if row.get("enabled") else "disabled"
+        if not row.get("present", True):
+            state = "absent"
+        print(f"{row['plugin_id']:<28} v{row.get('version')}  {row.get('transport'):<11} {state}")
+        if row.get("description"):
+            print(f"    {row['description']}")
+        accepts = ",".join(row.get("accepts") or [])
+        emits = ",".join(row.get("emits") or [])
+        print(f"    accepts: {accepts or '-'}   emits: {emits or '-'}")
+        tasks = row.get("tasks") or {}
+        if tasks:
+            summary = "  ".join(f"{state}={count}" for state, count in sorted(tasks.items()))
+            print(f"    tasks: {summary}")
+        if row.get("load_error"):
+            print(f"    LOAD ERROR: {row['load_error']}")
+        for note in row.get("notes") or []:
+            print(f"    ! {note}")
+    return 0
+
+
 def cmd_scans(args: argparse.Namespace, engine: "MediaEngine") -> int:
     sessions = engine.scans(args.limit)
     if args.json:
@@ -383,6 +462,36 @@ def build_parser() -> argparse.ArgumentParser:
     scan.set_defaults(handler=cmd_scan)
 
     sub.add_parser("stat", help="library counters and capabilities").set_defaults(handler=cmd_stat)
+
+    search = sub.add_parser(
+        "search",
+        help="query the library",
+        description=(
+            "Free text plus key:value filters. Reserved keys: type, camera, ext, "
+            "after, before, conf, source, has, not, sort. ANY other key:value is "
+            "an annotation filter — e.g. color.dominant:blue works the moment a "
+            "plugin emits it. Quote values with spaces: camera:\"EOS R5\"."
+        ),
+    )
+    search.add_argument("terms", nargs="*", help='e.g. beach type:image color.dominant:blue')
+    search.add_argument("--limit", type=int, default=25)
+    search.add_argument("--offset", type=int, default=0)
+    search.add_argument("--no-facets", action="store_true", help="skip facet computation")
+    search.set_defaults(handler=cmd_search)
+
+    backfill = sub.add_parser("backfill", help="run analyzers over the library")
+    backfill.add_argument(
+        "--plugin",
+        action="append",
+        metavar="ID",
+        help="run this plugin even if not enabled in config (repeatable)",
+    )
+    backfill.add_argument("--limit", type=int, help="cap newly enqueued assets per plugin")
+    backfill.set_defaults(handler=cmd_backfill)
+
+    plugins = sub.add_parser("plugins", help="discovered analyzers and their state")
+    plugins.add_argument("action", nargs="?", choices=["list"], default="list")
+    plugins.set_defaults(handler=cmd_plugins)
 
     info = sub.add_parser("info", help="everything known about one asset")
     info.add_argument("asset_id", type=int)

@@ -81,7 +81,11 @@ class JobManager:
                 )
                 with self._lock:
                     job["result"] = [item.as_dict() for item in results]
-                    job["state"] = "cancelled" if token.cancelled else "done"
+                    # BatchProducer cancels its shared token during ordinary
+                    # cleanup. ScanResult.cancelled is the authoritative user-
+                    # visible outcome; consulting the token here mislabels a
+                    # completed scan as cancelled.
+                    job["state"] = "cancelled" if any(item.cancelled for item in results) else "done"
             except Exception as exc:  # surfaced to the job endpoint
                 with self._lock:
                     job["state"] = "failed"
@@ -102,6 +106,38 @@ class JobManager:
             return False
         token.cancel("cancelled through API")
         return True
+
+    def start_backfill(self, plugin_id: str, limit: int | None) -> dict[str, Any]:
+        job_id = uuid.uuid4().hex
+        job = {
+            "id": job_id,
+            "kind": "plugin_backfill",
+            "plugin_id": plugin_id,
+            "state": "queued",
+            "progress": None,
+            "result": None,
+            "error": None,
+        }
+        with self._lock:
+            self._jobs[job_id] = job
+
+        def run() -> None:
+            with self._lock:
+                job["state"] = "running"
+            try:
+                result = self.engine.backfill([plugin_id], limit=limit)
+                with self._lock:
+                    job["result"] = result.as_dict()
+                    job["state"] = "done" if result.failed == 0 else "failed"
+                    if result.failed:
+                        job["error"] = f"{result.failed} analysis task(s) failed"
+            except Exception as exc:  # surfaced to the job endpoint
+                with self._lock:
+                    job["state"] = "failed"
+                    job["error"] = f"{type(exc).__name__}: {exc}"
+
+        threading.Thread(target=run, name=f"backfill-{job_id[:8]}", daemon=True).start()
+        return dict(job)
 
 
 def create_app(
@@ -181,16 +217,14 @@ def create_app(
             # the recursive JSON mode below is the QoL plan surface. Supporting
             # both here keeps CLI, UI, and automation clients on one endpoint.
             if payload.get("query") is not None:
-                from ..search import SearchPlanner, parse_query
+                from ..search import parse_query
 
                 query = parse_query(
                     str(payload.get("query", "")),
                     limit=int(payload.get("page_size", payload.get("limit", 50))),
                     offset=int(payload.get("offset", 0)),
                 )
-                return SearchPlanner(runtime.repos).search(
-                    query, with_facets=bool(payload.get("include_facets", True))
-                )
+                return runtime.search(query, with_facets=bool(payload.get("include_facets", True)))
             return service.search(payload)
         except (ValueError, NotImplementedError) as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -317,11 +351,19 @@ def create_app(
 
     @app.get("/api/plugins", dependencies=protected)
     def plugins() -> Any:
-        counts = runtime.repos.tasks.counts_by_plugin()
-        values = runtime.repos.tasks.list_plugins()
-        for item in values:
-            item["tasks"] = counts.get(str(item["plugin_id"]), {})
-        return values
+        return runtime.plugins.describe()
+
+    @app.post("/api/plugins/{plugin_id}/backfill", dependencies=protected, status_code=202)
+    def backfill_plugin(plugin_id: str, payload: dict[str, Any] | None = None) -> Any:
+        if runtime.plugins.get(plugin_id) is None:
+            raise HTTPException(status_code=404, detail="plugin not found")
+        requested = payload or {}
+        limit_value = requested.get("limit")
+        try:
+            limit = None if limit_value is None else max(1, int(limit_value))
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=422, detail="limit must be a positive integer") from exc
+        return jobs.start_backfill(plugin_id, limit)
 
     @app.delete("/api/producers/{producer_id}/annotations", dependencies=protected)
     def purge_producer(producer_id: int) -> Any:

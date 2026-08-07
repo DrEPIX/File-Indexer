@@ -281,7 +281,7 @@ class DerivativeBuilder:
             overwrite=overwrite,
         )
         for item in rendered:
-            self._record(asset_id, "thumb", item["variant"], target, item, result)
+            self._record(asset_id, "thumb", str(item["variant"]), target, item, result)
 
     def _raw_preview(self, source: Path, target: Path, *, overwrite: bool) -> Path | None:
         """Pull the embedded JPEG preview out of a camera raw file.
@@ -337,14 +337,15 @@ class DerivativeBuilder:
                 continue
             if poster is None:
                 poster = frame
-            item = {
-                "variant": f"{moment:.2f}",
+            variant = f"{moment:.2f}"
+            item: dict[str, Any] = {
+                "variant": variant,
                 "rel_name": frame.name,
                 "size_bytes": frame.stat().st_size,
                 "width": None,
                 "height": None,
             }
-            self._record(asset_id, "keyframe", item["variant"], target, item, result, bucket="keyframes")
+            self._record(asset_id, "keyframe", variant, target, item, result, bucket="keyframes")
 
         # The poster frame is what a grid shows, so it goes through the same
         # thumbnail sizes as a still image and lands under the same 'thumb'
@@ -359,7 +360,7 @@ class DerivativeBuilder:
                 quality=storage.thumbnail_quality,
                 overwrite=overwrite,
             ):
-                self._record(asset_id, "thumb", item["variant"], target, item, result)
+                self._record(asset_id, "thumb", str(item["variant"]), target, item, result)
 
         if self.config.storage.video_proxy:
             self._proxy(asset_id, target, source, result, overwrite=overwrite)
@@ -590,7 +591,7 @@ class DerivativeBuilder:
             str(cover), str(target), list(storage.thumbnail_sizes),
             fmt=storage.thumbnail_format, quality=storage.thumbnail_quality, overwrite=overwrite,
         ):
-            self._record(asset_id, "thumb", item["variant"], target, item, result)
+            self._record(asset_id, "thumb", str(item["variant"]), target, item, result)
 
     def _document_preview(
         self,
@@ -639,7 +640,7 @@ class DerivativeBuilder:
             str(page_image), str(target), list(storage.thumbnail_sizes),
             fmt=storage.thumbnail_format, quality=storage.thumbnail_quality, overwrite=overwrite,
         ):
-            self._record(asset_id, "thumb", item["variant"], target, item, result)
+            self._record(asset_id, "thumb", str(item["variant"]), target, item, result)
 
     # ── bookkeeping ─────────────────────────────────────────────────────────
 

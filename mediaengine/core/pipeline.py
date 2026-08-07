@@ -138,7 +138,7 @@ class IngestPipeline:
     ) -> None:
         self.config = config
         self.repos = repositories
-        self.cancel = cancel or CancelToken()
+        self.cancel = CancelToken() if cancel is None else cancel
         self.reporter = ProgressReporter(progress)
         self.extractor = MetadataExtractor(config)
         self.derivatives = DerivativeBuilder(config, repositories.derivatives)

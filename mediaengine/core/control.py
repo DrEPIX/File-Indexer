@@ -58,8 +58,14 @@ class CancelToken:
         """Block until cancelled. Returns True if it was."""
         return self._event.wait(timeout)
 
-    def __bool__(self) -> bool:  # pragma: no cover - readability sugar
-        return self._event.is_set()
+    # Deliberately no __bool__. Defining it as "is cancelled" reads nicely but
+    # makes a live, uncancelled token *falsy*, so the natural
+    # `cancel or CancelToken()` default silently throws the caller's token away
+    # and substitutes one nothing can ever trip. Callers use `is None` instead.
+
+    def __repr__(self) -> str:  # pragma: no cover - debug aid
+        state = f"cancelled: {self._reason}" if self._event.is_set() else "active"
+        return f"<CancelToken {state}>"
 
 
 @dataclass(slots=True)

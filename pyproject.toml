@@ -86,6 +86,14 @@ module = [
 ]
 ignore_missing_imports = true
 
+[[tool.mypy.overrides]]
+# numpy 2.x ships stubs using PEP 695 `type` statements, which mypy refuses to
+# parse under python_version = 3.11 even though they are fine at runtime.
+# Skipping the stubs keeps strict checking of our own code on a 3.11 target.
+module = ["numpy", "numpy.*"]
+follow_imports = "skip"
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"

@@ -149,7 +149,7 @@ class Walker:
         self.matcher = GlobMatcher(config.include, config.exclude)
         self.stats = WalkStats()
         self._on_error = on_error
-        self._cancel = cancel or CancelToken()
+        self._cancel = CancelToken() if cancel is None else cancel
         self._last_completed: str | None = None
 
     # ── traversal ───────────────────────────────────────────────────────────
@@ -401,7 +401,7 @@ class BatchProducer:
         self._queue: queue.Queue[WalkBatch | None] = queue.Queue(maxsize=queue_size)
         self._thread: threading.Thread | None = None
         self._error: BaseException | None = None
-        self._cancel = cancel or CancelToken()
+        self._cancel = CancelToken() if cancel is None else cancel
         self._resume = resume_after
 
     def start(self) -> "BatchProducer":
