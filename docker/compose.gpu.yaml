@@ -1,0 +1,22 @@
+services:
+  plugin-base:
+    image: mediaengine-plugin-base:cuda
+    build:
+      target: cuda
+
+  clip:
+    build:
+      args:
+        TORCH_INDEX_URL: https://download.pytorch.org/whl/cu124
+      additional_contexts:
+        plugin_base: service:plugin-base
+    environment:
+      CLIP_DEVICE: cuda
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+

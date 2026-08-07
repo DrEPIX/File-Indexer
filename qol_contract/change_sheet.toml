@@ -1,0 +1,516 @@
+# MEDIAENGINE QoL CHANGE SHEET — EDIT VALUES HERE, NOT PYTHON INTERNALS.
+# A small/low-context agent can safely add a [[filters]], [[sorts]], or
+# [[operations]] block by copying a nearby block and changing declared values.
+
+[surface]
+name = "MediaEngine"
+version = 1
+description = "Self-describing search and control surface"
+
+[search]
+default_sort = "captured"
+default_page_size = 100
+max_page_size = 500
+max_boolean_depth = 12
+dynamic_annotation_facets = true
+
+[ui]
+show_advanced_filters = false
+remember_last_query = true
+filter_search_enabled = true
+facet_limit = 100
+thumbnail_size = 256
+date_display = "local"
+
+[[sorts]]
+key = "captured"
+label = "Date captured"
+field = "assets.captured_at"
+default_direction = "desc"
+
+[[sorts]]
+key = "imported"
+label = "Date imported"
+field = "assets.imported_at"
+default_direction = "desc"
+
+[[sorts]]
+key = "filename"
+label = "Filename"
+field = "files.filename"
+default_direction = "asc"
+
+[[sorts]]
+key = "size"
+label = "File size"
+field = "assets.size_bytes"
+default_direction = "desc"
+
+[[sorts]]
+key = "duration"
+label = "Duration"
+field = "technical_metadata.duration_s"
+default_direction = "desc"
+
+[[sorts]]
+key = "relevance"
+label = "Search relevance"
+field = "search.relevance"
+default_direction = "desc"
+
+# Core identity and file filters
+[[filters]]
+key = "media.type"
+aliases = ["type"]
+label = "Media type"
+field = "assets.media_type"
+type = "enum"
+choices = ["image", "video", "audio", "document", "other"]
+operators = ["eq", "neq", "in", "not_in"]
+group = "File"
+widget = "multi-select"
+facet = true
+multiple = true
+
+[[filters]]
+key = "file.name"
+label = "Filename"
+field = "files.filename"
+type = "text"
+operators = ["eq", "contains", "starts_with", "ends_with", "regex"]
+group = "File"
+widget = "text"
+
+[[filters]]
+key = "file.extension"
+label = "Extension"
+field = "files.extension"
+type = "text"
+operators = ["eq", "neq", "in", "not_in"]
+group = "File"
+widget = "token-input"
+facet = true
+multiple = true
+
+[[filters]]
+key = "file.folder"
+aliases = ["folder"]
+label = "Folder"
+field = "files.path"
+type = "path"
+operators = ["under", "not_under", "eq", "contains"]
+group = "File"
+widget = "folder-picker"
+facet = true
+
+[[filters]]
+key = "file.size"
+label = "File size"
+field = "assets.size_bytes"
+type = "bytes"
+operators = ["eq", "gt", "gte", "lt", "lte", "between"]
+group = "File"
+widget = "range"
+unit = "bytes"
+
+[[filters]]
+key = "file.status"
+label = "Path status"
+field = "files.status"
+type = "enum"
+choices = ["present", "missing", "error", "excluded"]
+operators = ["eq", "neq", "in"]
+group = "File"
+widget = "multi-select"
+facet = true
+
+[[filters]]
+key = "file.copy_count"
+label = "Physical copies"
+field = "computed.file_copy_count"
+type = "integer"
+operators = ["eq", "gt", "gte", "lt", "lte", "between"]
+group = "File"
+widget = "range"
+
+# Dates
+[[filters]]
+key = "date.captured"
+aliases = ["captured"]
+label = "Date captured"
+field = "assets.captured_at"
+type = "datetime"
+operators = ["eq", "before", "after", "between", "missing", "exists"]
+group = "Dates"
+widget = "date-range"
+nullable = true
+
+[[filters]]
+key = "date.imported"
+label = "Date imported"
+field = "assets.imported_at"
+type = "datetime"
+operators = ["eq", "before", "after", "between"]
+group = "Dates"
+widget = "date-range"
+
+[[filters]]
+key = "date.modified"
+label = "File modified"
+field = "files.mtime_ns"
+type = "datetime"
+operators = ["before", "after", "between"]
+group = "Dates"
+widget = "date-range"
+
+# Technical metadata
+[[filters]]
+key = "dimensions.width"
+label = "Width"
+field = "technical_metadata.width"
+type = "integer"
+operators = ["eq", "gt", "gte", "lt", "lte", "between", "missing", "exists"]
+group = "Technical"
+widget = "range"
+unit = "px"
+
+[[filters]]
+key = "dimensions.height"
+label = "Height"
+field = "technical_metadata.height"
+type = "integer"
+operators = ["eq", "gt", "gte", "lt", "lte", "between", "missing", "exists"]
+group = "Technical"
+widget = "range"
+unit = "px"
+
+[[filters]]
+key = "dimensions.orientation"
+label = "Orientation"
+field = "computed.orientation_class"
+type = "enum"
+choices = ["landscape", "portrait", "square"]
+operators = ["eq", "neq", "in"]
+group = "Technical"
+widget = "segmented"
+facet = true
+
+[[filters]]
+key = "video.duration"
+aliases = ["duration"]
+label = "Duration"
+field = "technical_metadata.duration_s"
+type = "duration"
+operators = ["eq", "gt", "gte", "lt", "lte", "between", "missing", "exists"]
+group = "Technical"
+widget = "range"
+unit = "seconds"
+
+[[filters]]
+key = "video.frame_rate"
+label = "Frame rate"
+field = "technical_metadata.frame_rate"
+type = "number"
+operators = ["eq", "gt", "gte", "lt", "lte", "between"]
+group = "Technical"
+widget = "range"
+unit = "fps"
+
+[[filters]]
+key = "video.codec"
+label = "Video codec"
+field = "technical_metadata.video_codec"
+type = "text"
+operators = ["eq", "neq", "in", "not_in", "missing", "exists"]
+group = "Technical"
+widget = "multi-select"
+facet = true
+
+[[filters]]
+key = "audio.codec"
+label = "Audio codec"
+field = "technical_metadata.audio_codec"
+type = "text"
+operators = ["eq", "neq", "in", "not_in", "missing", "exists"]
+group = "Technical"
+widget = "multi-select"
+facet = true
+
+[[filters]]
+key = "document.pages"
+label = "Page count"
+field = "technical_metadata.page_count"
+type = "integer"
+operators = ["eq", "gt", "gte", "lt", "lte", "between", "missing", "exists"]
+group = "Technical"
+widget = "range"
+
+[[filters]]
+key = "camera.make"
+label = "Camera make"
+field = "metadata.camera_make"
+type = "text"
+operators = ["eq", "neq", "in", "contains", "missing", "exists"]
+group = "Camera"
+widget = "autocomplete"
+facet = true
+
+[[filters]]
+key = "camera.model"
+label = "Camera model"
+field = "metadata.camera_model"
+type = "text"
+operators = ["eq", "neq", "in", "contains", "missing", "exists"]
+group = "Camera"
+widget = "autocomplete"
+facet = true
+
+# Generic annotations: namespace and label are data, never hardcoded taxonomies.
+[[filters]]
+key = "annotation.namespace"
+label = "Annotation namespace"
+field = "annotations.namespace"
+type = "text"
+operators = ["eq", "neq", "in", "not_in", "starts_with"]
+group = "Annotations"
+widget = "dynamic-select"
+facet = true
+capability = "annotations"
+
+[[filters]]
+key = "annotation.label"
+aliases = ["label", "tag"]
+label = "Annotation label"
+field = "annotations.label"
+type = "text"
+operators = ["eq", "neq", "in", "not_in", "contains"]
+group = "Annotations"
+widget = "dynamic-select"
+facet = true
+multiple = true
+capability = "annotations"
+
+[[filters]]
+key = "annotation.confidence"
+label = "Minimum confidence"
+field = "annotations.confidence"
+type = "number"
+operators = ["eq", "gt", "gte", "lt", "lte", "between", "missing", "exists"]
+group = "Annotations"
+widget = "confidence-slider"
+capability = "annotations"
+
+[[filters]]
+key = "annotation.source"
+label = "Annotation source"
+field = "annotations.source"
+type = "enum"
+choices = ["embedded", "derived", "user"]
+operators = ["eq", "neq", "in", "not_in"]
+group = "Annotations"
+widget = "multi-select"
+facet = true
+capability = "annotations"
+
+[[filters]]
+key = "annotation.producer"
+label = "Annotation producer"
+field = "producers.plugin_id"
+type = "text"
+operators = ["eq", "neq", "in", "not_in"]
+group = "Annotations"
+widget = "dynamic-select"
+facet = true
+capability = "annotations"
+
+[[filters]]
+key = "tag.name"
+label = "Tag"
+field = "tags.name"
+type = "text"
+operators = ["eq", "neq", "in", "not_in", "contains"]
+group = "Annotations"
+widget = "tag-picker"
+facet = true
+multiple = true
+capability = "tags"
+
+# People, location, and semantic search stay capability-gated.
+[[filters]]
+key = "people.identity"
+label = "Person"
+field = "identities.id"
+type = "integer"
+operators = ["eq", "neq", "in", "not_in"]
+group = "People"
+widget = "identity-picker"
+facet = true
+multiple = true
+capability = "identities"
+
+[[filters]]
+key = "people.exists"
+label = "Has people"
+field = "computed.has_people"
+type = "boolean"
+operators = ["is_true", "is_false"]
+group = "People"
+widget = "toggle"
+capability = "identities"
+
+[[filters]]
+key = "location.exists"
+label = "Has location"
+field = "computed.has_location"
+type = "boolean"
+operators = ["is_true", "is_false"]
+group = "Location"
+widget = "toggle"
+capability = "spatial"
+
+[[filters]]
+key = "location.place"
+label = "Place"
+field = "places.id"
+type = "integer"
+operators = ["eq", "neq", "in", "not_in"]
+group = "Location"
+widget = "place-picker"
+facet = true
+multiple = true
+capability = "spatial"
+
+[[filters]]
+key = "location.area"
+label = "Map area"
+field = "asset_geo"
+type = "geo"
+operators = ["within_bbox", "within_radius"]
+group = "Location"
+widget = "map-picker"
+capability = "spatial"
+
+[[filters]]
+key = "semantic.similar_to"
+label = "Visually similar to"
+field = "embeddings.asset_id"
+type = "integer"
+operators = ["similar_to"]
+group = "Semantic"
+widget = "asset-picker"
+capability = "vector"
+
+# Operations describe the intended Python/HTTP control plane. `enabled = false`
+# hides an unfinished feature without changing client code.
+[[operations]]
+id = "surface.describe"
+method = "GET"
+path = "/api/surface"
+summary = "Discover filters, sorts, operations, and backend capabilities"
+capability = "core"
+
+[[operations]]
+id = "scan.start"
+method = "POST"
+path = "/api/scan"
+summary = "Start a resumable directory scan"
+capability = "scan"
+
+[[operations]]
+id = "jobs.get"
+method = "GET"
+path = "/api/jobs/{id}"
+summary = "Read progress and errors for a background job"
+capability = "jobs"
+
+[[operations]]
+id = "jobs.events"
+method = "WS"
+path = "/api/jobs/{id}/events"
+summary = "Stream job events"
+capability = "jobs"
+
+[[operations]]
+id = "assets.search"
+method = "POST"
+path = "/api/search"
+summary = "Search with recursive boolean filters and cursor pagination"
+capability = "search"
+
+[[operations]]
+id = "assets.get"
+method = "GET"
+path = "/api/assets/{id}"
+summary = "Get complete asset metadata and provenance"
+capability = "assets"
+
+[[operations]]
+id = "assets.thumbnail"
+method = "GET"
+path = "/api/assets/{id}/thumb"
+summary = "Get a cached thumbnail"
+capability = "derivatives"
+
+[[operations]]
+id = "assets.export"
+method = "GET"
+path = "/api/assets/{id}/export"
+summary = "Export everything known about one asset"
+capability = "assets"
+
+[[operations]]
+id = "assets.delete_derived"
+method = "DELETE"
+path = "/api/assets/{id}/derived"
+summary = "Delete purgeable derived data without touching originals"
+capability = "assets"
+
+[[operations]]
+id = "facets.list"
+method = "GET"
+path = "/api/facets"
+summary = "List dynamic namespace and label counts"
+capability = "facets"
+
+[[operations]]
+id = "map.query"
+method = "GET"
+path = "/api/map"
+summary = "Query clustered geographic assets"
+capability = "spatial"
+
+[[operations]]
+id = "annotations.create"
+method = "POST"
+path = "/api/annotations"
+summary = "Create a user-owned annotation"
+capability = "annotations"
+
+[[operations]]
+id = "plugins.list"
+method = "GET"
+path = "/api/plugins"
+summary = "List analyzer state and queue counts"
+capability = "plugins"
+
+[[operations]]
+id = "plugins.backfill"
+method = "POST"
+path = "/api/plugins/{id}/backfill"
+summary = "Enqueue an analyzer over a filtered library subset"
+capability = "plugins"
+
+[[operations]]
+id = "producers.purge"
+method = "DELETE"
+path = "/api/producers/{id}/annotations"
+summary = "Purge output from one producer"
+capability = "plugins"
+
+[[operations]]
+id = "biometrics.purge"
+method = "DELETE"
+path = "/api/biometrics"
+summary = "Purge biometric-derived data independently"
+capability = "identities"
+

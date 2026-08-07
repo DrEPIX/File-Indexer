@@ -1,0 +1,41 @@
+[plugin]
+id = "acme.clip"
+version = "1.0.0"
+transport = "http"
+accepts = ["image", "video"]
+emits = ["clip", "clip.tag"]
+depends_on = []
+model_id = "openai/clip-vit-base-patch32"
+description = "CLIP image, keyframe, and optional zero-shot embeddings over HTTP"
+transfer = "both"
+
+[plugin.requires]
+pixels = true
+frames = true
+audio = false
+text = false
+metadata_only = false
+gpu = true
+# The first uncached model load downloads weights into /models. Set false only
+# in an installation that pre-populates that volume and denies egress.
+network = true
+max_concurrency = 2
+
+[plugin.http]
+base_url = "http://clip:9100"
+auth_token = ""
+timeout_s = 120.0
+health_path = "/health"
+manifest_path = "/manifest"
+analyze_path = "/analyze"
+
+[plugin.namespaces.clip]
+display_name = "Visual similarity"
+value_type = "text"
+facetable = false
+
+[plugin.namespaces."clip.tag"]
+display_name = "CLIP zero-shot labels"
+value_type = "categorical"
+facetable = true
+

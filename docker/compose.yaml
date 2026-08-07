@@ -1,0 +1,100 @@
+name: mediaengine
+
+services:
+  plugin-base:
+    profiles: ["build-only"]
+    image: mediaengine-plugin-base:cpu
+    build:
+      context: ..
+      dockerfile: docker/plugin-base.Dockerfile
+      target: cpu
+      args:
+        PLUGIN_UID: ${MEDIAENGINE_UID:-1000}
+        PLUGIN_GID: ${MEDIAENGINE_GID:-1000}
+
+  api:
+    build:
+      context: ..
+      dockerfile: docker/api.Dockerfile
+      args:
+        PYTHON_VERSION: ${PYTHON_VERSION:-3.12}
+        MEDIAENGINE_UID: ${MEDIAENGINE_UID:-1000}
+        MEDIAENGINE_GID: ${MEDIAENGINE_GID:-1000}
+    restart: unless-stopped
+    init: true
+    environment:
+      MEDIAENGINE__STORAGE__DB_PATH: /data/db/library.db
+      MEDIAENGINE__STORAGE__DERIVATIVES_PATH: /data/derivatives
+      MEDIAENGINE__LIBRARY__ROOTS: '["/library"]'
+      MEDIAENGINE__PLUGINS__DIRECTORIES: '["/plugins"]'
+      MEDIAENGINE__PLUGINS__ENABLE_ALL: "true"
+      MEDIAENGINE__API__HOST: 0.0.0.0
+      MEDIAENGINE__API__PORT: "8420"
+      MEDIAENGINE__API__AUTH_TOKEN: ${MEDIAENGINE_AUTH_TOKEN:?Set MEDIAENGINE_AUTH_TOKEN to at least 16 random characters}
+    ports:
+      - "127.0.0.1:${MEDIAENGINE_PORT:-8420}:8420"
+    volumes:
+      - type: bind
+        source: ${MEDIAENGINE_LIBRARY_PATH:-../library}
+        target: /library
+        read_only: true
+      - type: bind
+        source: ../plugins-available
+        target: /plugins
+        read_only: true
+      - type: volume
+        source: mediaengine-db
+        target: /data/db
+      - type: volume
+        source: mediaengine-derivatives
+        target: /data/derivatives
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: ["ALL"]
+    stop_grace_period: 45s
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:8420/api/health"]
+      interval: 15s
+      timeout: 5s
+      start_period: 30s
+      retries: 5
+
+  clip:
+    profiles: ["clip"]
+    build:
+      context: ..
+      dockerfile: plugins-available/clip-http/Dockerfile
+      additional_contexts:
+        plugin_base: service:plugin-base
+      args:
+        TORCH_INDEX_URL: https://download.pytorch.org/whl/cpu
+    restart: unless-stopped
+    init: true
+    environment:
+      CLIP_DEVICE: cpu
+      CLIP_AUTH_TOKEN: ${CLIP_AUTH_TOKEN:-}
+      HF_HOME: /models/huggingface
+      TORCH_HOME: /models/torch
+    volumes:
+      - type: volume
+        source: clip-models
+        target: /models
+      - type: volume
+        source: mediaengine-derivatives
+        target: /data/derivatives
+        read_only: true
+    expose: ["9100"]
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: ["ALL"]
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:9100/health"]
+      interval: 15s
+      timeout: 5s
+      start_period: 90s
+      retries: 10
+
+volumes:
+  mediaengine-db:
+  mediaengine-derivatives:
+  clip-models:

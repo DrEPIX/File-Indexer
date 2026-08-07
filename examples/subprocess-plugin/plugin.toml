@@ -1,0 +1,31 @@
+[plugin]
+id = "example.subprocess"
+version = "1.0.0"
+transport = "subprocess"
+accepts = ["image", "video", "document", "other"]
+emits = ["example.subprocess"]
+depends_on = []
+model_id = "hardcoded-demo-v1"
+description = "Executable JSONL analyzer template with no third-party dependencies"
+transfer = "paths"
+
+[plugin.requires]
+pixels = true
+frames = false
+audio = false
+text = false
+metadata_only = false
+gpu = false
+network = false
+max_concurrency = 2
+
+[plugin.subprocess]
+command = ["python", "-u", "run.py"]
+cwd = "."
+env = { PYTHONUTF8 = "1" }
+
+[plugin.namespaces."example.subprocess"]
+display_name = "Subprocess example"
+value_type = "categorical"
+facetable = true
+
