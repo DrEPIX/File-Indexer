@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 ARG PYTHON_VERSION=3.12
-ARG CUDA_VERSION=12.4.1
+ARG CUDA_VERSION=12.6.3
 
 FROM python:${PYTHON_VERSION}-slim AS cpu
 ARG PLUGIN_UID=1000
@@ -17,7 +17,9 @@ RUN apt-get update \
 USER analyzer
 WORKDIR /work
 
-FROM nvidia/cuda:${CUDA_VERSION}-cudnn-runtime-ubuntu22.04 AS cuda
+# Ubuntu 24.04 supplies Python 3.12, keeping the GPU image inside the
+# project's Python >=3.11 support window without a third-party package feed.
+FROM nvidia/cuda:${CUDA_VERSION}-cudnn-runtime-ubuntu24.04 AS cuda
 ARG PLUGIN_UID=1000
 ARG PLUGIN_GID=1000
 ENV DEBIAN_FRONTEND=noninteractive \
@@ -36,4 +38,3 @@ RUN apt-get update \
     && chown -R analyzer:analyzer /models /work
 USER analyzer
 WORKDIR /work
-

@@ -1,7 +1,7 @@
 # Container Deployment
 
-This document covers only Codex-owned container packaging. Core CLI/API behavior
-is owned by Claude and may supersede the provisional startup command below.
+This document covers only Codex-owned container packaging. The API command and
+health paths below were confirmed against the core owner's CLI contract.
 
 ## Current machine note
 
@@ -16,29 +16,36 @@ Python project. It runs as UID 10001, drops Linux capabilities in Compose, binds
 the host port to loopback, mounts originals read-only at `/library`, and stores
 mutable state in the `mediaengine-data` volume.
 
-Copy `docker/.env.example` to `docker/.env`, set an absolute library path if
-desired, then run from the repository root:
+Copy `docker/.env.example` to `docker/.env`, set an absolute library path, and
+generate the required 16+ character API bearer token as shown in
+`docker/README.md`. Then run from the repository root:
 
 ```powershell
 docker compose --env-file docker/.env -f docker/compose.yaml config
 docker compose --env-file docker/.env -f docker/compose.yaml up --build
 ```
 
-The image currently defaults to:
+The entrypoint runs the idempotent migration command and then execs:
 
 ```text
-python -m mediaengine serve --config /config/config.yaml --host 0.0.0.0 --port 8420
+mediaengine serve --host 0.0.0.0 --port 8420
 ```
 
-That command is intentionally overrideable via Compose `command:`. It must be
-confirmed against Claude's delivered CLI before release. The container probe
-defaults to `GET /health`; set `MEDIAENGINE_HEALTH_PATH` if the core exposes a
-different unauthenticated liveness endpoint.
+The command is overrideable through Compose `command:`. The API container probe
+uses the intentionally unauthenticated `GET /api/health` endpoint.
 
 ## Security boundary
 
-Compose publishes only on `127.0.0.1` by default. Do not broaden that binding
-unless the core has a configured bearer token. Source libraries are read-only;
-database, logs, derivatives, model caches, and other mutable state must use
-separate volumes.
+Compose publishes only on `127.0.0.1` by default and still requires a bearer
+token because the process binds `0.0.0.0` inside its container. Source libraries
+are read-only; the DB, derivatives, and model cache use separate named volumes.
 
+Use `--profile clip` for the CPU analyzer. Add
+`-f docker/compose.gpu.yaml` for the RTX/CUDA overlay. Both mount derivatives at
+the identical `/data/derivatives` path, read-only in the analyzer, so `paths`
+transfer needs no rewriting.
+
+Use `--profile vision` to add face embeddings and object detection. The same
+profile runs on CPU; the GPU overlay selects CUDA and reserves an NVIDIA device.
+CLIP and vision are separate services so either can be enabled, restarted, or
+upgraded without coupling heavyweight model dependencies to the API process.

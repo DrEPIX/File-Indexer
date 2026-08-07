@@ -67,8 +67,8 @@ class ClipEncoder:
 
         if self._model is not None:
             return self
-        import torch  # type: ignore[import-untyped]
-        from transformers import CLIPModel, CLIPProcessor  # type: ignore[import-untyped]
+        import torch  # type: ignore[import-not-found]
+        from transformers import CLIPModel, CLIPProcessor  # type: ignore[import-not-found]
 
         if self.requested_device == "auto":
             device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -126,4 +126,3 @@ def load_default_encoder() -> Encoder:
     """Factory used by the background loader and replaceable in tests."""
 
     return ClipEncoder().load()
-

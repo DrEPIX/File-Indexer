@@ -75,6 +75,7 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(manifest["transfer"], "both")
         self.assertEqual(manifest["accepts"], ["image", "video"])
         self.assertTrue(manifest["requires"]["pixels"])
+        self.assertFalse(manifest["requires"]["gpu"])
 
     def test_health_reports_loading_then_ok(self) -> None:
         gate = threading.Event()
@@ -95,6 +96,24 @@ class ContractTests(unittest.TestCase):
             time.sleep(0.01)
         self.assertEqual(ready.json()["status"], "ok")
         self.assertTrue(ready.json()["model_loaded"])
+
+    def test_health_rejects_model_dimension_drift(self) -> None:
+        """A model change cannot silently poison an existing vector index."""
+
+        class WrongDimensionEncoder(FakeEncoder):
+            embedding_dim = 128
+
+        server.runtime.reset_for_test(WrongDimensionEncoder)
+        first = self.client.get("/health")
+        self.assertEqual(first.status_code, 200)
+        for _ in range(50):
+            response = self.client.get("/health")
+            if response.status_code == 503:
+                break
+            time.sleep(0.01)
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json()["status"], "error")
+        self.assertIn("declared dimension 512", response.json()["detail"])
 
     def test_valid_jpeg_returns_native_embedding(self) -> None:
         with self.subTest("path transfer"):
@@ -119,6 +138,37 @@ class ContractTests(unittest.TestCase):
         response = self.client.post("/analyze", json=payload)
         self.assertEqual(response.status_code, 200, response.text)
 
+    def test_video_keyframes_and_mean_pool_keep_declared_dimension(self) -> None:
+        """Frame vectors and the asset-level mean must stay in one vector space."""
+
+        from tempfile import TemporaryDirectory
+
+        with TemporaryDirectory() as directory:
+            first = Path(directory) / "frame_000.jpg"
+            second = Path(directory) / "frame_100.jpg"
+            first.write_bytes(jpeg_bytes())
+            second.write_bytes(jpeg_bytes())
+            payload = work_item(first, media_type="video", request_id="video-1")
+            payload["derivatives"] = {
+                "keyframes": [
+                    {"time": 0.0, "path": str(first.resolve())},
+                    {"time": 1.0, "path": str(second.resolve())},
+                ]
+            }
+            response = self.client.post("/analyze", json=payload)
+
+        self.assertEqual(response.status_code, 200, response.text)
+        result = response.json()
+        embeddings = [
+            annotation["embedding"]
+            for annotation in result["annotations"]
+            if annotation["namespace"] == "clip" and annotation["label"] == "embedding"
+        ]
+        declared = self.client.get("/manifest").json()["embedding_dim"]
+        self.assertEqual(len(embeddings), 3)  # two frames plus one mean-pooled asset vector
+        self.assertTrue(all(len(embedding) == declared == 512 for embedding in embeddings))
+        self.assertNotIn("region", result["annotations"][2])
+
     def test_corrupt_image_is_permanent_400(self) -> None:
         from tempfile import TemporaryDirectory
 
@@ -140,4 +190,3 @@ class ContractTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
-

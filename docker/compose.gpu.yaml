@@ -1,4 +1,10 @@
 services:
+  api:
+    environment:
+      # Authorize plugins that truly require a GPU. Optional accelerators such
+      # as CLIP and vision still advertise gpu=false so CPU mode remains valid.
+      MEDIAENGINE__PLUGINS__ALLOW_GPU: "true"
+
   plugin-base:
     image: mediaengine-plugin-base:cuda
     build:
@@ -7,7 +13,7 @@ services:
   clip:
     build:
       args:
-        TORCH_INDEX_URL: https://download.pytorch.org/whl/cu124
+        TORCH_INDEX_URL: https://download.pytorch.org/whl/cu121
       additional_contexts:
         plugin_base: service:plugin-base
     environment:
@@ -20,3 +26,18 @@ services:
               count: 1
               capabilities: [gpu]
 
+  vision:
+    build:
+      args:
+        TORCH_INDEX_URL: https://download.pytorch.org/whl/cu121
+      additional_contexts:
+        plugin_base: service:plugin-base
+    environment:
+      VISION_DEVICE: cuda
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]

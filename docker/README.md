@@ -27,14 +27,30 @@ docker compose --env-file docker/.env -f docker/compose.yaml up --build
 
 Add `--profile clip` to build and run the CPU CLIP analyzer. Model weights are
 downloaded at runtime into the `clip-models` volume, never baked into the image.
+The Compose stack explicitly grants plugin network access because the first
+uncached CLIP start downloads weights. After the cache is populated, operators
+who require an offline installation can set
+`MEDIAENGINE__PLUGINS__ALLOW_NETWORK=false` and deny container egress.
 
 ## NVIDIA GPU stack
 
-The GPU overlay uses CUDA 12.4, PyTorch cu124 wheels, and one reserved NVIDIA
-GPU. It still falls back safely if Python is run outside that container on CPU.
+The GPU overlay uses a CUDA 12 runtime, official PyTorch cu121 wheels, and one
+reserved NVIDIA GPU per analyzer. CUDA is optional: the same services run in
+the CPU profiles and still fall back safely outside the containers. The base
+stack denies plugins that *require* a GPU; applying the overlay explicitly
+grants that capability.
 
 ```powershell
 docker compose --env-file docker/.env -f docker/compose.yaml -f docker/compose.gpu.yaml --profile clip up --build
+```
+
+Use `--profile vision` for face learning/recognition vectors and COCO object
+detection, or enable both profiles together. Face embeddings are stored through
+the normal producer-aware pipeline and feed identity clustering; the model never
+overwrites user-confirmed identity data.
+
+```powershell
+docker compose --env-file docker/.env -f docker/compose.yaml -f docker/compose.gpu.yaml --profile clip --profile vision up --build
 ```
 
 This requires Docker Desktop with NVIDIA container support. The development
@@ -51,7 +67,10 @@ authoring, so static Compose validation is available before live build testing.
 - `/models` is the persistent, replaceable CLIP model cache.
 - `/plugins` is a read-only mount of `plugins-available/` for discovery.
 
+`plugin-base` is a build-only Compose service scaled to zero replicas. It lets
+the CLIP Dockerfile literally inherit the shared CPU or CUDA base while keeping
+`docker compose up` from starting a useless helper container.
+
 API liveness is `GET /api/health`; CLIP liveness is `GET /health`. The API
 entrypoint waits for a writable DB directory, runs idempotent migrations, then
 execs the server so signals reach PID 1 through `tini`.
-

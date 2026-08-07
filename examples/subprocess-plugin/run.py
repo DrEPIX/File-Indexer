@@ -111,7 +111,8 @@ def analyze(message: dict[str, Any]) -> dict[str, Any]:
             "retryable": False,
         }
 
-    asset = message.get("asset") if isinstance(message.get("asset"), dict) else {}
+    asset_value = message.get("asset")
+    asset: dict[str, Any] = asset_value if isinstance(asset_value, dict) else {}
     prior = message.get("prior_annotations")
     prior_annotations = prior if isinstance(prior, list) else []
     facts = thumbnail_facts(message)
@@ -186,4 +187,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

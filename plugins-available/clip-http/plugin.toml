@@ -8,6 +8,7 @@ depends_on = []
 model_id = "openai/clip-vit-base-patch32"
 description = "CLIP image, keyframe, and optional zero-shot embeddings over HTTP"
 transfer = "both"
+embedding_dim = 512
 
 [plugin.requires]
 pixels = true
@@ -15,7 +16,9 @@ frames = true
 audio = false
 text = false
 metadata_only = false
-gpu = true
+# CUDA is an acceleration option, not a host capability requirement: the same
+# service deliberately runs in the default CPU Compose profile.
+gpu = false
 # The first uncached model load downloads weights into /models. Set false only
 # in an installation that pre-populates that volume and denies egress.
 network = true
@@ -38,4 +41,3 @@ facetable = false
 display_name = "CLIP zero-shot labels"
 value_type = "categorical"
 facetable = true
-

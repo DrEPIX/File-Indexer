@@ -48,8 +48,11 @@ class ModelRuntime:
     def _load(self) -> None:
         try:
             encoder = self._loader()
-            if encoder.embedding_dim <= 0:
-                raise RuntimeError("encoder reported a non-positive dimension")
+            if encoder.embedding_dim != EXPECTED_EMBEDDING_DIM:
+                raise RuntimeError(
+                    f"encoder dimension {encoder.embedding_dim} does not match "
+                    f"the declared dimension {EXPECTED_EMBEDDING_DIM}"
+                )
             with self._lock:
                 self._encoder = encoder
         except Exception as exc:  # model libraries expose many exception types
@@ -107,7 +110,9 @@ def manifest() -> dict[str, Any]:
             "audio": False,
             "text": False,
             "metadata_only": False,
-            "gpu": True,
+            # CUDA accelerates this service, but CPU remains supported and
+            # therefore GPU is not a required host capability.
+            "gpu": False,
             "network": True,
             "max_concurrency": 2,
         },
@@ -139,14 +144,14 @@ def error(status: int, kind: str, message: str, *, retryable: bool, retry_after:
     )
 
 
-@app.get("/manifest", dependencies=[Depends(authorized)])
+@app.get("/manifest", dependencies=[Depends(authorized)])  # type: ignore[untyped-decorator]
 def get_manifest() -> dict[str, Any]:
     """Return registration metadata without forcing a model download."""
 
     return manifest()
 
 
-@app.get("/health", dependencies=[Depends(authorized)])
+@app.get("/health", dependencies=[Depends(authorized)])  # type: ignore[untyped-decorator]
 def health() -> JSONResponse:
     """Start lazy loading and report loading, ready, or terminal error state."""
 
@@ -180,8 +185,9 @@ def image_reference(derivatives: Mapping[str, Any]) -> Mapping[str, Any]:
 
     thumbnails = derivatives.get("thumbnails")
     if isinstance(thumbnails, Mapping) and thumbnails:
-        if isinstance(thumbnails.get("512"), Mapping):
-            return thumbnails["512"]
+        preferred = thumbnails.get("512")
+        if isinstance(preferred, Mapping):
+            return preferred
         numeric = [(int(key), value) for key, value in thumbnails.items() if str(key).isdigit() and isinstance(value, Mapping)]
         if numeric:
             return max(numeric, key=lambda pair: pair[0])[1]
@@ -293,7 +299,7 @@ def build_annotations(
     return annotations
 
 
-@app.post("/analyze", dependencies=[Depends(authorized)])
+@app.post("/analyze", dependencies=[Depends(authorized)])  # type: ignore[untyped-decorator]
 async def analyze(work: dict[str, Any]) -> JSONResponse:
     """Decode requested derivatives, batch inference, and return annotations."""
 
@@ -320,7 +326,8 @@ async def analyze(work: dict[str, Any]) -> JSONResponse:
         deadline_s = float(work.get("deadline_s", 120.0))
         if deadline_s <= 0:
             return error(408, "deadline_exceeded", "deadline elapsed before analysis", retryable=True)
-        config = work.get("config") if isinstance(work.get("config"), Mapping) else {}
+        config_value = work.get("config")
+        config: Mapping[str, Any] = config_value if isinstance(config_value, Mapping) else {}
         labels = requested_labels(config)
         decoded_type, images, frame_times = collect_images(work)
         remaining = deadline_s - (time.monotonic() - started)
@@ -345,4 +352,3 @@ async def analyze(work: dict[str, Any]) -> JSONResponse:
             "duration_ms": duration_ms,
         },
     )
-

@@ -2,10 +2,10 @@
 .gitignore
 __pycache__
 *.pyc
+.venv/
+**/.venv/
 .mypy_cache
 .pytest_cache
 data/
 models/
-docs/
 tests/
-*.md

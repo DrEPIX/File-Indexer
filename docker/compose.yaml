@@ -2,7 +2,7 @@ name: mediaengine
 
 services:
   plugin-base:
-    profiles: ["build-only"]
+    profiles: ["clip", "vision"]
     image: mediaengine-plugin-base:cpu
     build:
       context: ..
@@ -11,6 +11,8 @@ services:
       args:
         PLUGIN_UID: ${MEDIAENGINE_UID:-1000}
         PLUGIN_GID: ${MEDIAENGINE_GID:-1000}
+    deploy:
+      replicas: 0
 
   api:
     build:
@@ -28,6 +30,8 @@ services:
       MEDIAENGINE__LIBRARY__ROOTS: '["/library"]'
       MEDIAENGINE__PLUGINS__DIRECTORIES: '["/plugins"]'
       MEDIAENGINE__PLUGINS__ENABLE_ALL: "true"
+      MEDIAENGINE__PLUGINS__ALLOW_NETWORK: "true"
+      MEDIAENGINE__PLUGINS__ALLOW_GPU: "false"
       MEDIAENGINE__API__HOST: 0.0.0.0
       MEDIAENGINE__API__PORT: "8420"
       MEDIAENGINE__API__AUTH_TOKEN: ${MEDIAENGINE_AUTH_TOKEN:?Set MEDIAENGINE_AUTH_TOKEN to at least 16 random characters}
@@ -88,13 +92,68 @@ services:
       - no-new-privileges:true
     cap_drop: ["ALL"]
     healthcheck:
-      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:9100/health"]
+      test:
+        - CMD-SHELL
+        - >-
+          if [ -n "$$CLIP_AUTH_TOKEN" ]; then
+            curl --fail --silent --header "Authorization: Bearer $$CLIP_AUTH_TOKEN" http://127.0.0.1:9100/health;
+          else
+            curl --fail --silent http://127.0.0.1:9100/health;
+          fi
       interval: 15s
       timeout: 5s
       start_period: 90s
       retries: 10
 
+  vision:
+    profiles: ["vision"]
+    build:
+      context: ..
+      dockerfile: plugins-available/vision-http/Dockerfile
+      additional_contexts:
+        plugin_base: service:plugin-base
+      args:
+        TORCH_INDEX_URL: https://download.pytorch.org/whl/cpu
+    restart: unless-stopped
+    init: true
+    environment:
+      VISION_DEVICE: cpu
+      VISION_AUTH_TOKEN: ${VISION_AUTH_TOKEN:-}
+      VISION_FACE_THRESHOLD: ${VISION_FACE_THRESHOLD:-0.90}
+      VISION_OBJECT_THRESHOLD: ${VISION_OBJECT_THRESHOLD:-0.70}
+      VISION_MAX_FACES: ${VISION_MAX_FACES:-32}
+      VISION_MAX_OBJECTS: ${VISION_MAX_OBJECTS:-100}
+      VISION_MAX_KEYFRAMES: ${VISION_MAX_KEYFRAMES:-3}
+      HF_HOME: /models/huggingface
+      TORCH_HOME: /models/torch
+    volumes:
+      - type: volume
+        source: vision-models
+        target: /models
+      - type: volume
+        source: mediaengine-derivatives
+        target: /data/derivatives
+        read_only: true
+    expose: ["9200"]
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: ["ALL"]
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          if [ -n "$$VISION_AUTH_TOKEN" ]; then
+            curl --fail --silent --header "Authorization: Bearer $$VISION_AUTH_TOKEN" http://127.0.0.1:9200/health;
+          else
+            curl --fail --silent http://127.0.0.1:9200/health;
+          fi
+      interval: 20s
+      timeout: 5s
+      start_period: 180s
+      retries: 12
+
 volumes:
   mediaengine-db:
   mediaengine-derivatives:
   clip-models:
+  vision-models:

@@ -8,7 +8,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
-from typing import Any, TextIO
+from typing import Any, TextIO, cast
 
 
 ROOT = Path(__file__).resolve().parent
@@ -75,15 +75,17 @@ def main() -> int:
         )
         assert process.stdin is not None
         assert process.stdout is not None
+        child_stdin = cast(TextIO, process.stdin)
+        child_stdout = cast(TextIO, process.stdout)
 
-        send(process.stdin, {"type": "hello", "protocol": PROTOCOL, "config": {}})
-        ready = receive(process.stdout)
+        send(child_stdin, {"type": "hello", "protocol": PROTOCOL, "config": {}})
+        ready = receive(child_stdout)
         assert ready["type"] == "ready"
         assert ready["manifest"]["protocol"] == PROTOCOL
         assert ready["manifest"]["id"] == "example.subprocess"
 
-        send(process.stdin, work_item(thumbnail, request_id="success-1"))
-        result = receive(process.stdout)
+        send(child_stdin, work_item(thumbnail, request_id="success-1"))
+        result = receive(child_stdout)
         assert result["type"] == "result"
         assert result["request_id"] == "success-1"
         assert len(result["annotations"]) == 2
@@ -91,8 +93,8 @@ def main() -> int:
         assert result["annotations"][0]["value"]["thumbnail_available"] is True
         assert result["annotations"][0]["value"]["prior_annotation_count"] == 1
 
-        send(process.stdin, work_item(thumbnail, request_id="error-1", force_error=True))
-        error = receive(process.stdout)
+        send(child_stdin, work_item(thumbnail, request_id="error-1", force_error=True))
+        error = receive(child_stdout)
         assert error == {
             "type": "error",
             "request_id": "error-1",
@@ -101,10 +103,10 @@ def main() -> int:
             "retryable": False,
         }
 
-        send(process.stdin, {"type": "shutdown"})
+        send(child_stdin, {"type": "shutdown"})
         return_code = process.wait(timeout=5.0)
         assert return_code == 0
-        assert process.stdout.read() == "", "stdout contained non-protocol output"
+        assert child_stdout.read() == "", "stdout contained non-protocol output"
 
     print("subprocess plugin contract: PASS")
     return 0
@@ -112,4 +114,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

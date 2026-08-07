@@ -19,7 +19,6 @@ ENV HF_HOME=/models/huggingface \
 VOLUME ["/models"]
 EXPOSE 9100
 HEALTHCHECK --interval=15s --timeout=5s --start-period=90s --retries=10 \
-    CMD-SHELL if [ -n "$CLIP_AUTH_TOKEN" ]; then auth="-H Authorization:\ Bearer\ $CLIP_AUTH_TOKEN"; else auth=""; fi; curl --fail --silent $auth http://127.0.0.1:9100/health || exit 1
+    CMD if [ -n "$CLIP_AUTH_TOKEN" ]; then curl --fail --silent --header "Authorization: Bearer $CLIP_AUTH_TOKEN" http://127.0.0.1:9100/health; else curl --fail --silent http://127.0.0.1:9100/health; fi
 ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["python", "-m", "uvicorn", "server:app", "--host", "0.0.0.0", "--port", "9100"]
-
