@@ -13,6 +13,7 @@ No generative LLM is used. The initial local stack consists of:
 | `acme.clip` | Visual embeddings and open-vocabulary category scoring | `clip`, `visual.category` |
 | `acme.vision` | COCO object detection and face-region embeddings | `vision.object`, `vision.face` |
 | `local.safety` | Dedicated NSFW risk classification | `safety.nsfw`, `safety.nsfw.frame` |
+| `core.visual-signals` | Fast exposure, detail, palette and aspect tagging | `visual.*` |
 
 The vision service also accepts any number of operator-supplied Caffe SSD
 models through `VISION_CAFFE_MODELS_CONFIG`. Each model has independent files,
@@ -53,8 +54,10 @@ those volumes or point each service at a compatible local model directory.
 
 ## Category configuration
 
-The starter CLIP taxonomy covers common formats, subjects, activities, and
-scenes. It intentionally avoids sensitive personal-trait inference. Replace it
+The starter CLIP taxonomy covers 64 common formats, subjects, activities,
+scenes, and camera styles. Scores are normalized within each facet so adding a
+scene does not dilute an activity score. It intentionally avoids sensitive
+personal-trait inference. Replace it
 with library-specific prompts without changing code:
 
 ```yaml
@@ -67,12 +70,17 @@ plugins:
       prompts: [wildlife, woodworking, lecture, drone footage, product demo]
       tag_threshold: 0.10
       top_k: 5
+      per_group_top_k: 2
       max_keyframes: 8
 ```
 
 Changing per-plugin config changes the producer identity and causes a safe,
 attributable re-analysis. User-confirmed annotations continue to outrank model
 output.
+
+For opt-in public-figure matching against reference images you have the right
+to process, see [FACE_REFERENCE_PACKS.md](FACE_REFERENCE_PACKS.md). Reference
+matches always enter a human review queue and never assign names automatically.
 
 ## NSFW policy and search
 

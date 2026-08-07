@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping, Sequence
 from datetime import datetime
 from typing import Any
@@ -118,6 +119,8 @@ class QueryPlanner:
             return None
         if value is None and not definition.nullable:
             raise QueryError(f"filter {definition.key!r} requires a value")
+        if definition.value_type is ValueType.GEO:
+            return self._coerce_geo(definition, operator, value)
         if operator in LIST_OPERATORS:
             if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
                 raise QueryError(f"operator {operator!r} requires an array value")
@@ -125,6 +128,69 @@ class QueryPlanner:
                 raise QueryError("between requires exactly two values")
             return [self._coerce_scalar(definition, item) for item in value]
         return self._coerce_scalar(definition, value)
+
+    @staticmethod
+    def _coerce_geo(
+        definition: FilterDefinition,
+        operator: str,
+        value: Any,
+    ) -> dict[str, float]:
+        """Validate and normalize map filters before they reach SQL."""
+
+        if not isinstance(value, Mapping):
+            raise QueryError(f"invalid value for {definition.key!r}: expected geo object")
+
+        def number(*keys: str) -> float:
+            raw: Any = None
+            found = False
+            for key in keys:
+                if key in value:
+                    raw = value[key]
+                    found = True
+                    break
+            if not found or isinstance(raw, bool):
+                raise ValueError(f"missing numeric field {keys[0]!r}")
+            result = float(raw)
+            if not math.isfinite(result):
+                raise ValueError(f"field {keys[0]!r} must be finite")
+            return result
+
+        try:
+            if operator == "within_bbox":
+                south = number("min_lat", "south")
+                north = number("max_lat", "north")
+                west = number("min_lon", "west")
+                east = number("max_lon", "east")
+                if not -90.0 <= south <= north <= 90.0:
+                    raise ValueError("latitude bounds must satisfy -90 <= south <= north <= 90")
+                if not -180.0 <= west <= 180.0 or not -180.0 <= east <= 180.0:
+                    raise ValueError("longitude bounds must be between -180 and 180")
+                return {
+                    "min_lat": south,
+                    "max_lat": north,
+                    "min_lon": west,
+                    "max_lon": east,
+                }
+            if operator == "within_radius":
+                latitude = number("latitude")
+                longitude = number("longitude")
+                radius_km = number("radius_km")
+                if not -90.0 <= latitude <= 90.0:
+                    raise ValueError("latitude must be between -90 and 90")
+                if not -180.0 <= longitude <= 180.0:
+                    raise ValueError("longitude must be between -180 and 180")
+                if radius_km <= 0.0:
+                    raise ValueError("radius_km must be greater than zero")
+                return {
+                    "latitude": latitude,
+                    "longitude": longitude,
+                    "radius_km": radius_km,
+                }
+            raise ValueError(f"unsupported geo operator {operator!r}")
+        except (TypeError, ValueError) as exc:
+            raise QueryError(
+                f"invalid value for {definition.key!r}: {value!r} ({exc})"
+            ) from exc
 
     @staticmethod
     def _coerce_scalar(definition: FilterDefinition, value: Any) -> Any:
@@ -140,11 +206,17 @@ class QueryPlanner:
             if definition.value_type is ValueType.INTEGER:
                 if isinstance(value, bool):
                     raise ValueError("expected integer")
-                return int(value)
+                converted = int(value)
+                if isinstance(value, float) and not value.is_integer():
+                    raise ValueError("expected integer without a fractional part")
+                return converted
             if definition.value_type in {ValueType.NUMBER, ValueType.DURATION, ValueType.BYTES}:
                 if isinstance(value, bool):
                     raise ValueError("expected number")
-                return float(value)
+                converted_number = float(value)
+                if not math.isfinite(converted_number):
+                    raise ValueError("expected a finite number")
+                return converted_number
             if definition.value_type is ValueType.DATETIME:
                 text = str(value)
                 datetime.fromisoformat(text.replace("Z", "+00:00"))

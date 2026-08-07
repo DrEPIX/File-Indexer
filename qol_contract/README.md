@@ -38,6 +38,19 @@ python -m unittest discover -s tests -v
 
 The generated `surface.json` is disposable output; the TOML sheet is canonical.
 
+From the repository root, the preferred complete quality gate is:
+
+```powershell
+.\scripts\verify.ps1
+```
+
+It validates every plugin manifest, parses the PowerShell tooling, compiles the
+source tree, and includes the core, QoL, analyzer, and authoring-tool tests in
+one run. Use `-Quick` to skip bytecode compilation, `-Smoke` to exercise a
+disposable mixed-media library end to end, or `-FullTypeCheck` when the full
+application's optional dependency stubs are installed and compatible with the
+configured Python target.
+
 ## Integration boundary
 
 The eventual core should implement `BackendPort.execute_search(SearchPlan)` and
@@ -49,4 +62,3 @@ controllers should be thin: parse JSON, call `QoLService`, map contract errors t
 The planner deliberately produces a neutral plan rather than SQL. SQL compilation
 belongs beside Claude's database/repository implementation, where joins, FTS,
 R-tree, cursor stability, and permissions can be handled transactionally.
-

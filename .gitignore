@@ -33,6 +33,7 @@ env/
 .coverage
 htmlcov/
 .tox/
+.tools/
 
 # MediaEngine runtime data. Never commit a library index or a derivative cache.
 data/

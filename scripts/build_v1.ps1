@@ -1,7 +1,4 @@
-param(
-    [switch]$Clean,
-    [switch]$OneFile
-)
+param([switch]$Clean)
 
 $ErrorActionPreference = "Stop"
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
@@ -16,11 +13,9 @@ if ($LASTEXITCODE -ne 0) {
     throw "PyInstaller is not installed. Run: .\.venv\Scripts\python.exe -m pip install pyinstaller"
 }
 
-$DistPath = if ($OneFile) {
-    Join-Path $ProjectRoot "dist\portable"
-} else {
-    Join-Path $ProjectRoot "dist"
-}
+# Use a release channel directory so an antivirus scan or a running prior
+# build cannot lock the next COLLECT target in place.
+$DistPath = Join-Path $ProjectRoot "dist\release"
 
 $Arguments = @(
     "-m", "PyInstaller",
@@ -32,14 +27,34 @@ $Arguments = @(
     "--specpath", (Join-Path $ProjectRoot "build"),
     "--collect-data", "mediaengine",
     "--collect-submodules", "mediaengine.plugins.builtin",
-    "--copy-metadata", "mediaengine"
+    "--copy-metadata", "mediaengine",
+    "--add-data", ((Join-Path $ProjectRoot "qol_contract\change_sheet.toml") + ";share\mediaengine")
 )
+
+# Bundle deployable plugin examples without accidentally shipping local model
+# weights, virtual environments, or Python caches. Copying the directory as a
+# single --add-data tree previously pulled in >9,000 development files and
+# made COLLECT fail on Windows.
+$PluginRoot = Join-Path $ProjectRoot "plugins-available"
+$ExcludedPluginPath = '[\\/](\.venv|venv|__pycache__|\.pytest_cache|\.mypy_cache|\.ruff_cache|models|\.git)[\\/]'
+$ExcludedPluginFile = '\.(pyc|pyo|pt|bin|safetensors|onnx|caffemodel)$'
+$PluginFiles = Get-ChildItem -LiteralPath $PluginRoot -Recurse -File | Where-Object {
+    $_.FullName -notmatch $ExcludedPluginPath -and $_.Name -notmatch $ExcludedPluginFile
+}
+$PluginRootPrefix = $PluginRoot.TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
+foreach ($PluginFile in $PluginFiles) {
+    $Relative = $PluginFile.FullName.Substring($PluginRootPrefix.Length)
+    $RelativeDirectory = Split-Path -Parent $Relative
+    $Destination = if ($RelativeDirectory) {
+        Join-Path "plugins-available" $RelativeDirectory
+    } else {
+        "plugins-available"
+    }
+    $Arguments += @("--add-data", ($PluginFile.FullName + ";" + $Destination))
+}
 
 if ($Clean) {
     $Arguments += "--clean"
-}
-if ($OneFile) {
-    $Arguments += "--onefile"
 }
 $Arguments += (Join-Path $ProjectRoot "File Indexer V1.pyw")
 
@@ -48,9 +63,5 @@ if ($LASTEXITCODE -ne 0) {
     throw "V1 packaging failed with exit code $LASTEXITCODE"
 }
 
-$Executable = if ($OneFile) {
-    Join-Path $DistPath "File Indexer V1.exe"
-} else {
-    Join-Path $DistPath "File Indexer V1\File Indexer V1.exe"
-}
+$Executable = Join-Path $DistPath "File Indexer V1\File Indexer V1.exe"
 Write-Host "Built: $Executable"

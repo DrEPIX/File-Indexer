@@ -1,6 +1,6 @@
 [plugin]
 id = "acme.clip"
-version = "1.1.0"
+version = "1.2.0"
 transport = "http"
 accepts = ["image", "video"]
 emits = ["clip", "visual.category"]
@@ -39,6 +39,6 @@ facetable = false
 
 [plugin.namespaces."visual.category"]
 display_name = "Visual categories"
-description = "Local zero-shot tags for format, subject, activity and scene."
+description = "Local zero-shot tags for format, subject, activity, scene and style."
 value_type = "categorical"
 facetable = true

@@ -1,0 +1,25 @@
+{
+  "name": "My licensed public-figure references",
+  "version": "2026-08-07",
+  "source_url": "https://example.invalid/reference-manifest",
+  "license_name": "Replace with the actual image license",
+  "attribution": "Replace with required creator/source attribution",
+  "rights_statement": "I verified that I may process these images for this local reference pack.",
+  "retention_policy": "Review yearly; delete the pack when it is no longer needed.",
+  "metadata": {
+    "notes": "No images are bundled with MediaEngine."
+  },
+  "people": [
+    {
+      "external_id": "example-person",
+      "display_name": "Example Person",
+      "source_url": "https://example.invalid/example-person",
+      "images": [
+        {
+          "path": "replace-with-a-local-licensed-photo.jpg",
+          "source_ref": "Source page or catalog identifier"
+        }
+      ]
+    }
+  ]
+}

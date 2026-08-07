@@ -68,6 +68,22 @@ def test_health_auth_surface_and_asset(tmp_path: Path) -> None:
             assert isinstance(plugins.json(), list)
             assert any(item["plugin_id"] == "core.exif-entities" for item in plugins.json())
 
+            catalog = client.get("/api/plugins/catalog", headers=headers)
+            assert catalog.status_code == 200, catalog.text
+            lm_studio = next(
+                item for item in catalog.json() if item["plugin_id"] == "local.lm-studio"
+            )
+            assert lm_studio["kind"] == "Local LLM"
+            assert lm_studio["configurable"] is True
+
+            network_denied = client.patch(
+                "/api/plugins/local.lm-studio",
+                headers=headers,
+                json={"enabled": True},
+            )
+            assert network_denied.status_code == 409
+            assert "grant_network=true" in network_denied.json()["detail"]
+
             backfill = client.post(
                 "/api/plugins/core.exif-entities/backfill",
                 headers=headers,

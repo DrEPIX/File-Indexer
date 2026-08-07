@@ -46,5 +46,6 @@ This script binds only to loopback. Docker binds the process inside its
 container to `0.0.0.0`, publishes it only on host loopback, and requires the
 configured bearer token.
 
-See `docs/DEPLOYMENT.md`, `docs/AI_TAGGING.md`, and `docker/README.md` for
-container, local-model, safety, and GPU profiles.
+See `docs/DEPLOYMENT.md`, `docs/AI_TAGGING.md`,
+`docs/FACE_REFERENCE_PACKS.md`, and `docker/README.md` for container,
+local-model, face-reference, safety, and GPU profiles.

@@ -9,6 +9,14 @@ from __future__ import annotations
 
 from .exif_entities import ExifEntitiesAnalyzer
 from .exif_gps import ExifGpsAnalyzer
+from .lm_studio import LmStudioAnalyzer
 from .stub_classifier import StubClassifier
+from .visual_signals import VisualSignalsAnalyzer
 
-__all__ = ["ExifEntitiesAnalyzer", "ExifGpsAnalyzer", "StubClassifier"]
+__all__ = [
+    "ExifEntitiesAnalyzer",
+    "ExifGpsAnalyzer",
+    "LmStudioAnalyzer",
+    "StubClassifier",
+    "VisualSignalsAnalyzer",
+]

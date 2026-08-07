@@ -6,7 +6,8 @@ from typing import Any, Mapping
 
 from mediaengine_qol.errors import QueryError
 from mediaengine_qol.facade import QoLService
-from mediaengine_qol.models import SearchPlan, SearchRequest
+from mediaengine_qol.mediaengine_backend import MediaEngineBackend
+from mediaengine_qol.models import GroupOperator, PlannedGroup, SearchPlan, SearchRequest
 from mediaengine_qol.planner import QueryPlanner
 from mediaengine_qol.registry import SurfaceRegistry
 from mediaengine_qol.schema import search_request_schema
@@ -139,6 +140,132 @@ class ContractTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(QueryError, "exceeds 1 levels"):
             planner.plan(too_deep)
+
+    def test_malformed_nested_json_is_rejected_as_a_query_error(self) -> None:
+        malformed_requests = (
+            {"where": {"clauses": [42]}},
+            {"where": {"groups": ["not-an-object"]}},
+            {"page_size": True},
+            {"include_facets": "false"},
+            {"facet_namespaces": ["valid", ""]},
+            {"text": {"unexpected": "object"}},
+        )
+        for request in malformed_requests:
+            with self.subTest(request=request), self.assertRaises(QueryError):
+                SearchRequest.from_mapping(request)
+
+    def test_parser_depth_limit_runs_before_python_recursion_limit(self) -> None:
+        nested: dict[str, Any] = {"clauses": []}
+        for _ in range(66):
+            nested = {"groups": [nested]}
+        with self.assertRaisesRegex(QueryError, "parser safety limit"):
+            SearchRequest.from_mapping({"where": nested})
+
+    def test_numeric_and_geo_values_are_finite_and_shape_checked(self) -> None:
+        planner = QueryPlanner(self.registry)
+        invalid_clauses = (
+            {"key": "file.size", "operator": "gt", "value": float("inf")},
+            {"key": "dimensions.width", "operator": "eq", "value": 1.5},
+            {
+                "key": "location.area",
+                "operator": "within_radius",
+                "value": {"latitude": 91, "longitude": 0, "radius_km": 5},
+            },
+            {
+                "key": "location.area",
+                "operator": "within_bbox",
+                "value": {"south": 20, "north": 10, "west": 0, "east": 1},
+            },
+        )
+        for clause in invalid_clauses:
+            with self.subTest(clause=clause), self.assertRaises(QueryError):
+                planner.plan(SearchRequest.from_mapping({"where": {"clauses": [clause]}}))
+
+        plan = planner.plan(
+            SearchRequest.from_mapping(
+                {
+                    "where": {
+                        "clauses": [
+                            {
+                                "key": "location.area",
+                                "operator": "within_bbox",
+                                "value": {
+                                    "south": -10,
+                                    "north": 10,
+                                    "west": 170,
+                                    "east": -170,
+                                },
+                            }
+                        ]
+                    }
+                }
+            )
+        )
+        self.assertEqual(
+            plan.where.clauses[0].value,
+            {"min_lat": -10.0, "max_lat": 10.0, "min_lon": 170.0, "max_lon": -170.0},
+        )
+        params: list[Any] = []
+        sql = MediaEngineBackend._geo_predicate(
+            "within_bbox", plan.where.clauses[0].value, params
+        )
+        self.assertIn("gx.max_lon>=? OR gx.min_lon<=?", sql)
+        self.assertEqual(params, [-10.0, 10.0, 170.0, -170.0])
+
+    def test_facets_cover_filtered_matches_instead_of_only_current_page(self) -> None:
+        class FakeDatabase:
+            def query(self, sql: str, params: list[Any]) -> list[dict[str, Any]]:
+                del params
+                if "SELECT a.id, a.content_hash" in sql:
+                    return [{"id": 1}, {"id": 2}]
+                if "SELECT a.id FROM assets" in sql:
+                    return [{"id": 1}, {"id": 2}, {"id": 3}]
+                raise AssertionError(sql)
+
+            def scalar(self, sql: str, params: list[Any]) -> int:
+                del sql, params
+                return 3
+
+        class FakeAnnotations:
+            def __init__(self) -> None:
+                self.asset_ids: list[int] | None = None
+
+            def facet(
+                self, namespace: str, *, asset_ids: list[int]
+            ) -> list[dict[str, Any]]:
+                self.asset_ids = asset_ids
+                return [{"namespace": namespace, "label": "all", "count": len(asset_ids)}]
+
+        class FakeRepositories:
+            def __init__(self) -> None:
+                self.annotations = FakeAnnotations()
+
+        class FakeEngine:
+            def __init__(self) -> None:
+                self.db = FakeDatabase()
+                self.repos = FakeRepositories()
+
+            def start(self) -> "FakeEngine":
+                return self
+
+        engine = FakeEngine()
+        backend = MediaEngineBackend(engine)
+        plan = SearchPlan(
+            text=None,
+            where=PlannedGroup(GroupOperator.ALL, (), ()),
+            sort_field="assets.imported_at",
+            direction="desc",
+            page_size=1,
+            cursor=None,
+            include_facets=True,
+            facet_namespaces=("demo",),
+            required_capabilities=frozenset(),
+        )
+        result = backend.execute_search(plan)
+        self.assertEqual(len(result["items"]), 1)
+        self.assertEqual(result["total"], 3)
+        self.assertEqual(engine.repos.annotations.asset_ids, [1, 2, 3])
+        self.assertEqual(result["facets"]["demo"][0]["count"], 3)
 
 
 if __name__ == "__main__":

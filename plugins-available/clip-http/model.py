@@ -19,18 +19,26 @@ DEFAULT_CATEGORIES: dict[str, tuple[str, ...]] = {
     "format": (
         "animation", "gameplay", "live performance", "screen recording",
         "security camera footage", "slideshow", "tutorial", "vlog",
+        "news broadcast", "interview", "documentary", "product demonstration",
     ),
     "subject": (
         "animals", "artwork", "documents and text", "food", "nature",
-        "people", "technology", "vehicles",
+        "people", "technology", "vehicles", "architecture", "clothing",
+        "toys", "tools", "plants", "water",
     ),
     "activity": (
         "celebration", "conversation", "cooking", "exercise", "making music",
-        "shopping", "sports", "technology use", "travel",
+        "shopping", "sports", "computer use", "travel", "driving", "dancing",
+        "construction", "crafting", "cleaning", "eating", "giving a presentation",
     ),
     "scene": (
         "city", "home", "nature", "office", "outdoors", "road",
-        "sports venue", "stage",
+        "sports venue", "stage", "beach", "forest", "mountains", "restaurant",
+        "classroom", "workshop", "store", "vehicle interior",
+    ),
+    "style": (
+        "black and white", "cinematic", "handheld camera", "aerial footage",
+        "close-up shot", "wide shot",
     ),
 }
 DEFAULT_LABELS = tuple(label for labels in DEFAULT_CATEGORIES.values() for label in labels)

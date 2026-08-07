@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Product
+      Id="*"
+      Name="File Indexer V1"
+      Language="1033"
+      Version="0.1.0"
+      Manufacturer="File Indexer contributors"
+      UpgradeCode="{4B91ABF2-4482-4C1B-A3D5-FCD7A3B01E85}">
+    <Package
+        InstallerVersion="500"
+        Compressed="yes"
+        InstallScope="perUser"
+        InstallPrivileges="limited"
+        Platform="x64"
+        Description="File Indexer V1 desktop media library" />
+    <MajorUpgrade DowngradeErrorMessage="A newer version of File Indexer V1 is already installed." />
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+
+    <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER" />
+    <Property Id="ARPPRODUCTICON" Value="FileIndexerIcon.exe" />
+    <Property Id="ARPHELPLINK" Value="https://github.com/DrEPIX/File-Indexer" />
+    <Icon Id="FileIndexerIcon.exe" SourceFile="$(var.PayloadDir)\File Indexer V1.exe" />
+    <WixVariable Id="WixUILicenseRtf" Value="$(var.ProjectRoot)\installer\License.rtf" />
+    <UIRef Id="WixUI_InstallDir" />
+
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="LocalAppDataFolder">
+        <Directory Id="LocalProgramsFolder" Name="Programs">
+          <Directory Id="INSTALLFOLDER" Name="File Indexer V1" />
+        </Directory>
+      </Directory>
+      <Directory Id="ProgramMenuFolder">
+        <Directory Id="ApplicationProgramsFolder" Name="File Indexer V1" />
+      </Directory>
+      <Directory Id="DesktopFolder" />
+    </Directory>
+
+    <DirectoryRef Id="ApplicationProgramsFolder">
+      <Component Id="StartMenuShortcut" Guid="{AE45C21B-C560-405D-BFA7-B071F98D07CA}">
+        <Shortcut
+            Id="StartMenuShortcutEntry"
+            Name="File Indexer V1"
+            Description="Search and organize your local media library"
+            Target="[INSTALLFOLDER]File Indexer V1.exe"
+            WorkingDirectory="INSTALLFOLDER" />
+        <RemoveFolder Id="RemoveApplicationProgramsFolder" On="uninstall" />
+        <RegistryValue
+            Root="HKCU"
+            Key="Software\File Indexer\V1"
+            Name="StartMenuShortcut"
+            Type="integer"
+            Value="1"
+            KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+
+    <DirectoryRef Id="DesktopFolder">
+      <Component Id="DesktopShortcut" Guid="{E6609B79-D88A-46F9-80A6-ED33E9CE8E9D}">
+        <Shortcut
+            Id="DesktopShortcutEntry"
+            Name="File Indexer V1"
+            Description="Search and organize your local media library"
+            Target="[INSTALLFOLDER]File Indexer V1.exe"
+            WorkingDirectory="INSTALLFOLDER" />
+        <RegistryValue
+            Root="HKCU"
+            Key="Software\File Indexer\V1"
+            Name="DesktopShortcut"
+            Type="integer"
+            Value="1"
+            KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+
+    <Feature Id="Complete" Title="File Indexer V1" Level="1" Display="expand">
+      <ComponentGroupRef Id="AppFiles" />
+      <ComponentRef Id="StartMenuShortcut" />
+      <ComponentRef Id="DesktopShortcut" />
+    </Feature>
+  </Product>
+</Wix>

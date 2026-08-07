@@ -42,6 +42,7 @@ __all__ = [
     "LoggingConfig",
     "Config",
     "load_config",
+    "save_config",
     "default_config",
 ]
 
@@ -190,7 +191,7 @@ class PluginsConfig(BaseModel):
     model_config = {"extra": "forbid"}
 
     enabled: list[str] = Field(
-        default=["core.exif-entities", "core.exif-gps"],
+        default=["core.exif-entities", "core.exif-gps", "core.visual-signals"],
         description="Plugin ids permitted to run. Empty list means none.",
     )
     disabled: list[str] = Field(
@@ -364,6 +365,33 @@ class Config(BaseSettings):
 def default_config() -> Config:
     """A valid config with no library roots. Useful for tests and first run."""
     return Config()
+
+
+def save_config(config: Config, path: str | os.PathLike[str] | None = None) -> Path:
+    """Atomically persist a validated configuration.
+
+    Runtime managers use this instead of hand-editing YAML, so plugin-shop and
+    API changes have the same validation and crash-safety as desktop settings.
+    An explicit destination is required when the config was not loaded from a
+    file; silently inventing a config location would make deployments
+    impossible to reason about.
+    """
+
+    selected = Path(path) if path is not None else config.source_path
+    if selected is None:
+        raise ConfigError("cannot persist config without a destination path")
+    destination = selected.expanduser().resolve()
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    payload = config.model_dump(mode="json", exclude={"source_path"})
+    rendered = yaml.safe_dump(payload, sort_keys=False, allow_unicode=True)
+    temporary = destination.with_suffix(destination.suffix + ".tmp")
+    try:
+        temporary.write_text(rendered, encoding="utf-8")
+        os.replace(temporary, destination)
+    except OSError as exc:
+        raise ConfigError(f"could not save configuration to {destination}: {exc}") from exc
+    config.source_path = destination
+    return destination
 
 
 def load_config(path: str | os.PathLike[str] | None = None) -> Config:

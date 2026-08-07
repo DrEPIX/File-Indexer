@@ -11,11 +11,7 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
-from typing import Any
-
-import yaml
-
-from ..config import Config, load_config
+from ..config import Config, load_config, save_config
 
 APP_NAME = "File Indexer V1"
 
@@ -25,6 +21,12 @@ def executable_dir() -> Path:
     if getattr(sys, "frozen", False):
         return Path(sys.executable).resolve().parent
     return Path(__file__).resolve().parents[2]
+
+
+def bundled_resource_dir() -> Path:
+    """Return PyInstaller's data root or the source checkout root."""
+    frozen_root = getattr(sys, "_MEIPASS", None)
+    return Path(frozen_root).resolve() if frozen_root else executable_dir()
 
 
 def user_data_dir() -> Path:
@@ -53,7 +55,7 @@ def _new_config(path: Path) -> Config:
     config.logging.format = "text"
     config.logging.console = False
 
-    bundled_plugins = executable_dir() / "plugins-available"
+    bundled_plugins = bundled_resource_dir() / "plugins-available"
     if bundled_plugins.is_dir():
         config.plugins.directories = [bundled_plugins]
     config.source_path = path.resolve()
@@ -63,14 +65,7 @@ def _new_config(path: Path) -> Config:
 def save_desktop_config(config: Config, path: Path | None = None) -> Path:
     """Atomically save a GUI-editable configuration file."""
     destination = (path or config.source_path or desktop_config_path()).resolve()
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    payload: dict[str, Any] = config.model_dump(mode="json", exclude={"source_path"})
-    rendered = yaml.safe_dump(payload, sort_keys=False, allow_unicode=True)
-    temporary = destination.with_suffix(destination.suffix + ".tmp")
-    temporary.write_text(rendered, encoding="utf-8")
-    os.replace(temporary, destination)
-    config.source_path = destination
-    return destination
+    return save_config(config, destination)
 
 
 def load_desktop_config(path: Path | None = None) -> Config:

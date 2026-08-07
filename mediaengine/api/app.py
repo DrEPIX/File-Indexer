@@ -401,6 +401,101 @@ def create_app(
     def plugins() -> Any:
         return runtime.plugins.describe()
 
+    @app.get("/api/plugins/catalog", dependencies=protected)
+    def plugin_catalog() -> Any:
+        from ..plugins import PluginManager
+
+        return PluginManager(runtime).catalog()
+
+    @app.post("/api/plugins/register", dependencies=protected, status_code=201)
+    def register_plugin(payload: dict[str, Any]) -> Any:
+        from ..errors import ConfigError, PluginError
+        from ..plugins import PluginManager
+
+        try:
+            base_url = str(payload["base_url"])
+            result = PluginManager(runtime).register_remote(
+                base_url,
+                auth_token=str(payload["auth_token"]) if payload.get("auth_token") else None,
+                enabled=bool(payload.get("enabled", True)),
+                allow_external=bool(payload.get("allow_external", False)),
+                verify_tls=bool(payload.get("verify_tls", True)),
+            )
+            return result.as_dict()
+        except KeyError as exc:
+            raise HTTPException(status_code=422, detail="base_url is required") from exc
+        except ConfigError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except PluginError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.patch("/api/plugins/{plugin_id}", dependencies=protected)
+    def update_plugin(plugin_id: str, payload: dict[str, Any]) -> Any:
+        from ..errors import ConfigError, PluginError
+        from ..plugins import PluginManager
+
+        if "enabled" not in payload:
+            raise HTTPException(status_code=422, detail="enabled is required")
+        try:
+            return PluginManager(runtime).set_enabled(
+                plugin_id,
+                bool(payload["enabled"]),
+                grant_network=bool(payload.get("grant_network", False)),
+            )
+        except ConfigError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except PluginError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.put("/api/plugins/{plugin_id}/config", dependencies=protected)
+    def configure_plugin(plugin_id: str, payload: dict[str, Any]) -> Any:
+        from ..errors import ConfigError, PluginError
+        from ..plugins import PluginManager
+
+        values = payload.get("config", payload)
+        if not isinstance(values, dict):
+            raise HTTPException(status_code=422, detail="config must be an object")
+        try:
+            configured = PluginManager(runtime).configure(plugin_id, values)
+        except ConfigError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except PluginError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return {
+            "plugin_id": plugin_id,
+            "configured": True,
+            "keys": sorted(configured),
+        }
+
+    @app.delete("/api/plugins/{plugin_id}/registration", dependencies=protected)
+    def unregister_plugin(plugin_id: str) -> Any:
+        from ..errors import ConfigError
+        from ..plugins import PluginManager
+
+        try:
+            removed = PluginManager(runtime).unregister_remote(plugin_id)
+        except ConfigError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        if not removed:
+            raise HTTPException(status_code=404, detail="remote registration not found")
+        return {"plugin_id": plugin_id, "removed": True}
+
+    @app.get("/api/integrations/lm-studio/models", dependencies=protected)
+    def lm_studio_models() -> Any:
+        from ..errors import PluginError
+        from ..plugins.builtin.lm_studio import DEFAULT_BASE_URL, LmStudioClient
+
+        config = runtime.config.plugin_config("local.lm-studio")
+        client = LmStudioClient(
+            str(config.get("base_url") or DEFAULT_BASE_URL),
+            api_token=str(config["api_token"]) if config.get("api_token") else None,
+            timeout_s=min(float(config.get("timeout_s", 10.0)), 30.0),
+        )
+        try:
+            return {"base_url": client.base_url, "models": client.models()}
+        except PluginError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+
     @app.post("/api/plugins/{plugin_id}/backfill", dependencies=protected, status_code=202)
     def backfill_plugin(plugin_id: str, payload: dict[str, Any] | None = None) -> Any:
         if runtime.plugins.get(plugin_id) is None:
@@ -420,6 +515,69 @@ def create_app(
     @app.delete("/api/biometrics", dependencies=protected)
     def purge_biometrics() -> Any:
         return runtime.purge_biometrics()
+
+    @app.get("/api/face-reference-packs", dependencies=protected)
+    def face_reference_packs() -> Any:
+        return runtime.face_reference_packs()
+
+    @app.post("/api/face-reference-packs", dependencies=protected, status_code=201)
+    def import_face_reference_pack(payload: dict[str, Any]) -> Any:
+        try:
+            return runtime.import_face_reference_pack(payload)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.delete("/api/face-reference-packs/{pack_id}", dependencies=protected)
+    def delete_face_reference_pack(pack_id: int) -> Any:
+        if not runtime.delete_face_reference_pack(pack_id):
+            raise HTTPException(status_code=404, detail="face reference pack not found")
+        return {"pack_id": pack_id, "deleted": True}
+
+    @app.post("/api/face-reference-packs/{pack_id}/match", dependencies=protected)
+    def match_face_reference_pack(pack_id: int, payload: dict[str, Any] | None = None) -> Any:
+        from ..errors import NotFoundError
+
+        values = payload or {}
+        try:
+            return runtime.match_face_reference_pack(
+                pack_id,
+                threshold=float(values.get("threshold", 0.72)),
+                min_margin=float(values.get("min_margin", 0.05)),
+                limit=int(values.get("limit", 100_000)),
+            )
+        except NotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.get("/api/face-match-suggestions", dependencies=protected)
+    def face_match_suggestions(status: str = "pending", limit: int = 200) -> Any:
+        try:
+            return runtime.face_match_suggestions(status=status, limit=limit)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post("/api/face-match-suggestions/{suggestion_id}/accept", dependencies=protected)
+    def accept_face_match_suggestion(suggestion_id: int) -> Any:
+        from ..errors import ImmutableUserDataError, NotFoundError
+
+        try:
+            return runtime.review_face_match_suggestion(suggestion_id, accept=True)
+        except NotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except (ImmutableUserDataError, ValueError) as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.post("/api/face-match-suggestions/{suggestion_id}/reject", dependencies=protected)
+    def reject_face_match_suggestion(suggestion_id: int) -> Any:
+        from ..errors import NotFoundError
+
+        try:
+            return runtime.review_face_match_suggestion(suggestion_id, accept=False)
+        except NotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     app.state.engine = runtime
     app.state.qol = service

@@ -62,7 +62,9 @@ mediaengine-v1 = "mediaengine.gui:main"
 [project.entry-points."mediaengine.analyzers"]
 "core.exif-entities" = "mediaengine.plugins.builtin.exif_entities:ExifEntitiesAnalyzer"
 "core.exif-gps" = "mediaengine.plugins.builtin.exif_gps:ExifGpsAnalyzer"
+"core.visual-signals" = "mediaengine.plugins.builtin.visual_signals:VisualSignalsAnalyzer"
 "example.stub-classifier" = "mediaengine.plugins.builtin.stub_classifier:StubClassifier"
+"local.lm-studio" = "mediaengine.plugins.builtin.lm_studio:LmStudioAnalyzer"
 
 [tool.setuptools.packages.find]
 where = [".", "qol_contract/src"]

@@ -25,9 +25,10 @@ import os
 import re
 import shutil
 import tempfile
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, ContextManager
 
 from ..config import Config
 from ..db.repositories import DerivativeRepository
@@ -45,6 +46,17 @@ _LOG = logging.getLogger(__name__)
 _PTS_TIME = re.compile(r"pts_time:(\d+(?:\.\d+)?)")
 
 _MIME_BY_FORMAT = {"webp": "image/webp", "jpeg": "image/jpeg", "png": "image/png"}
+
+# Duplicate paths can be processed concurrently before the database collapses
+# them to one asset. Stripe final publishes so Windows never has two threads
+# replacing the same content-addressed file at once. A fixed-size table avoids
+# retaining one lock for every derivative in a large library.
+_PUBLISH_LOCKS = tuple(threading.RLock() for _ in range(256))
+
+
+def _publish_lock(destination: Path) -> ContextManager[bool]:
+    key = os.fspath(destination.resolve())
+    return _PUBLISH_LOCKS[hash(key) % len(_PUBLISH_LOCKS)]
 
 
 def derivative_dir(root: Path, content_hash: str) -> Path:
@@ -95,9 +107,17 @@ def _atomic_write_path(destination: Path) -> Path:
 
 def _finalise(temp: Path, destination: Path) -> int:
     """Rename a completed temp file into place; returns its size."""
-    size = temp.stat().st_size
-    os.replace(temp, destination)
-    return size
+    with _publish_lock(destination):
+        size = temp.stat().st_size
+        try:
+            os.replace(temp, destination)
+        except PermissionError:
+            # Another worker can have the identical content-addressed result
+            # open on Windows. Its completed file is an equally valid winner.
+            if destination.is_file():
+                return destination.stat().st_size
+            raise
+        return size
 
 
 def render_thumbnails(
@@ -146,47 +166,48 @@ def render_thumbnails(
             if size > longest and index > 0:
                 continue
             destination = directory / f"thumb_{size}.{extension}"
-            if destination.exists() and not overwrite:
-                try:
-                    with Image.open(destination) as existing:
-                        produced.append(
-                            {
-                                "variant": str(size),
-                                "rel_name": destination.name,
-                                "width": existing.width,
-                                "height": existing.height,
-                                "size_bytes": destination.stat().st_size,
-                                "reused": True,
-                            }
-                        )
-                        continue
-                except OSError:
-                    destination.unlink(missing_ok=True)  # half-written; redo it
+            with _publish_lock(destination):
+                if destination.exists() and not overwrite:
+                    try:
+                        with Image.open(destination) as existing:
+                            produced.append(
+                                {
+                                    "variant": str(size),
+                                    "rel_name": destination.name,
+                                    "width": existing.width,
+                                    "height": existing.height,
+                                    "size_bytes": destination.stat().st_size,
+                                    "reused": True,
+                                }
+                            )
+                            continue
+                    except OSError:
+                        destination.unlink(missing_ok=True)  # half-written; redo it
 
-            thumb = image.copy()
-            thumb.thumbnail((size, size), Image.Resampling.LANCZOS)
-            temp = _atomic_write_path(destination)
-            try:
-                save_options: dict[str, Any] = {"quality": quality}
-                if fmt == "webp":
-                    save_options["method"] = 4
-                elif fmt == "jpeg":
-                    save_options["optimize"] = True
-                    save_options["progressive"] = True
-                thumb.save(temp, format=fmt.upper(), **save_options)
-                written = _finalise(temp, destination)
-            finally:
-                temp.unlink(missing_ok=True)
-            produced.append(
-                {
-                    "variant": str(size),
-                    "rel_name": destination.name,
-                    "width": thumb.width,
-                    "height": thumb.height,
-                    "size_bytes": written,
-                    "reused": False,
-                }
-            )
+                thumb = image.copy()
+                thumb.thumbnail((size, size), Image.Resampling.LANCZOS)
+                temp = _atomic_write_path(destination)
+                try:
+                    save_options: dict[str, Any] = {"quality": quality}
+                    if fmt == "webp":
+                        save_options["method"] = 4
+                    elif fmt == "jpeg":
+                        save_options["optimize"] = True
+                        save_options["progressive"] = True
+                    thumb.save(temp, format=fmt.upper(), **save_options)
+                    written = _finalise(temp, destination)
+                finally:
+                    temp.unlink(missing_ok=True)
+                produced.append(
+                    {
+                        "variant": str(size),
+                        "rel_name": destination.name,
+                        "width": thumb.width,
+                        "height": thumb.height,
+                        "size_bytes": written,
+                        "reused": False,
+                    }
+                )
     return produced
 
 

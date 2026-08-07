@@ -29,7 +29,7 @@ from model import (
 
 PROTOCOL = "mediaengine.analyzer/1"
 PLUGIN_ID = "acme.clip"
-PLUGIN_VERSION = "1.1.0"
+PLUGIN_VERSION = "1.2.0"
 EXPECTED_EMBEDDING_DIM = 512
 
 
@@ -127,7 +127,7 @@ def manifest() -> dict[str, Any]:
             "clip": {"display_name": "Visual similarity", "value_type": "text", "facetable": False},
             "visual.category": {
                 "display_name": "Visual categories",
-                "description": "Local zero-shot tags for format, subject, activity and scene.",
+                "description": "Local zero-shot tags for format, subject, activity, scene and style.",
                 "value_type": "categorical",
                 "facetable": True,
             },
@@ -248,7 +248,13 @@ def category_group(label: str) -> str:
 def tag_annotations(
     scores: Mapping[str, float], config: Mapping[str, Any], *, sampled_frames: int
 ) -> list[dict[str, Any]]:
-    """Emit only the strongest configurable zero-shot labels."""
+    """Emit strong labels after normalizing competition within each facet.
+
+    CLIP returns one softmax over every prompt.  Without this second-stage
+    normalization, adding more scene prompts would lower unrelated activity
+    confidence.  Facet-local scores make the taxonomy extensible and easier
+    to tune while preserving the raw model score in provenance.
+    """
 
     threshold = float(config.get("tag_threshold", 0.10))
     if not 0.0 <= threshold <= 1.0:
@@ -256,14 +262,32 @@ def tag_annotations(
     top_k = int(config.get("top_k", 5))
     if not 1 <= top_k <= 32:
         raise ValueError("config.top_k must be between 1 and 32")
+    per_group_top_k = int(config.get("per_group_top_k", 2))
+    if not 1 <= per_group_top_k <= 8:
+        raise ValueError("config.per_group_top_k must be between 1 and 8")
+    grouped: dict[str, list[tuple[str, float]]] = {}
+    for label, raw_score in scores.items():
+        grouped.setdefault(category_group(label), []).append((label, float(raw_score)))
+    ranked: list[tuple[str, str, float, float]] = []
+    for group, items in grouped.items():
+        group_total = sum(max(0.0, score) for _, score in items)
+        for label, raw_score in sorted(items, key=lambda item: item[1], reverse=True)[:per_group_top_k]:
+            facet_score = max(0.0, raw_score) / group_total if group_total > 0 else 0.0
+            ranked.append((label, group, facet_score, raw_score))
     return [
         {
             "namespace": "visual.category",
             "label": label,
             "confidence": float(confidence),
-            "value": {"group": category_group(label), "sampled_frames": sampled_frames},
+            "value": {
+                "group": group,
+                "raw_score": raw_score,
+                "sampled_frames": sampled_frames,
+            },
         }
-        for label, confidence in sorted(scores.items(), key=lambda item: item[1], reverse=True)[:top_k]
+        for label, group, confidence, raw_score in sorted(
+            ranked, key=lambda item: item[2], reverse=True
+        )[:top_k]
         if confidence >= threshold
     ]
 

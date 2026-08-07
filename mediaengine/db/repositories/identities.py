@@ -462,6 +462,21 @@ class IdentityRepository(Repository):
 
         def _op(c: sqlite3.Connection) -> dict[str, int]:
             counts: dict[str, int] = {}
+            # Reference packs are biometric templates too.  Count each layer
+            # explicitly before removing identities so purge reports are
+            # auditable rather than relying on uncounted FK cascades.
+            counts["face_match_suggestions"] = c.execute(
+                "DELETE FROM face_match_suggestions"
+            ).rowcount
+            counts["face_reference_embeddings"] = c.execute(
+                "DELETE FROM face_reference_embeddings"
+            ).rowcount
+            counts["face_reference_people"] = c.execute(
+                "DELETE FROM face_reference_people"
+            ).rowcount
+            counts["face_reference_packs"] = c.execute(
+                "DELETE FROM face_reference_packs"
+            ).rowcount
             # Materialise the target set *first*. Evaluating the subquery
             # lazily would be a correctness bug: deleting region_identity
             # shrinks it, so regions that were biometric only by virtue of

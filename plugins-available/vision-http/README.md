@@ -57,6 +57,14 @@ The matching `VISION_*` entries in `docker/.env` set installation defaults;
 per-plugin request config wins when both are present. These are intentionally
 plain variables so changing model sensitivity does not require Python edits.
 
+## Optional named reference packs
+
+`build_reference_pack.py` converts operator-supplied, licensed single-face
+images into a versioned local embedding pack. MediaEngine stores no reference
+image bytes and creates only reviewable match suggestions. See
+`docs/FACE_REFERENCE_PACKS.md` for the source manifest, import, matching,
+review, and deletion workflow.
+
 The first start downloads model weights into the persistent `/models` volume.
 After pre-populating the cache, egress can be denied for offline operation.
 If `VISION_AUTH_TOKEN` is set for the service, put the same value in

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -10,6 +11,10 @@ from typing import Sequence
 
 from fastapi.testclient import TestClient
 from PIL import Image
+
+PLUGIN_ROOT = Path(__file__).resolve().parent
+if str(PLUGIN_ROOT) not in sys.path:
+    sys.path.insert(0, str(PLUGIN_ROOT))
 
 import safety_server as server
 

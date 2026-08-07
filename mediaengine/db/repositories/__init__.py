@@ -13,6 +13,7 @@ from .assets import AssetRepository, TriageResult
 from .base import Repository
 from .identities import IdentityRepository, pack_vector, unpack_vector
 from .places import PlaceRepository
+from .reference_faces import FaceReferenceRepository
 from .tags import DerivativeRepository, SearchDocRepository, TagRepository
 from .tasks import TaskRepository
 
@@ -30,6 +31,7 @@ __all__ = [
     "DerivativeRepository",
     "SearchDocRepository",
     "IdentityRepository",
+    "FaceReferenceRepository",
     "pack_vector",
     "unpack_vector",
     "Repositories",
@@ -44,7 +46,7 @@ class Repositories:
     """
 
     __slots__ = ("db", "assets", "annotations", "tasks", "places", "tags",
-                 "derivatives", "search_docs", "identities")
+                 "derivatives", "search_docs", "identities", "reference_faces")
 
     def __init__(self, db: Database) -> None:
         self.db = db
@@ -56,6 +58,7 @@ class Repositories:
         self.derivatives = DerivativeRepository(db)
         self.search_docs = SearchDocRepository(db)
         self.identities = IdentityRepository(db)
+        self.reference_faces = FaceReferenceRepository(db)
 
     def stats(self) -> dict[str, object]:
         """Aggregate counters for `/api/admin/stats` and `mediaengine stat`."""
@@ -65,6 +68,7 @@ class Repositories:
             "annotations": self.annotations.stats(),
             "tasks": self.tasks.counts_by_state(),
             "identities": self.identities.stats(),
+            "face_references": self.reference_faces.stats(),
             "derivatives": {
                 "count_by_kind": self.derivatives.counts_by_kind(),
                 "total_bytes": self.derivatives.total_bytes(),

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import sys
 import threading
 import time
 import unittest
@@ -12,8 +13,12 @@ from typing import Sequence
 from fastapi.testclient import TestClient
 from PIL import Image
 
+PLUGIN_ROOT = Path(__file__).resolve().parent
+if str(PLUGIN_ROOT) not in sys.path:
+    sys.path.insert(0, str(PLUGIN_ROOT))
+
 import server
-from model import EncodedBatch
+from model import DEFAULT_CATEGORIES, EncodedBatch
 
 
 class FakeEncoder:
@@ -70,7 +75,7 @@ class ContractTests(unittest.TestCase):
         manifest = self.client.get("/manifest").json()
         self.assertEqual(manifest["protocol"], server.PROTOCOL)
         self.assertEqual(manifest["id"], "acme.clip")
-        self.assertEqual(manifest["version"], "1.1.0")
+        self.assertEqual(manifest["version"], "1.2.0")
         self.assertEqual(manifest["embedding_dim"], 512)
         self.assertEqual(manifest["transfer"], "both")
         self.assertEqual(manifest["accepts"], ["image", "video"])
@@ -183,7 +188,12 @@ class ContractTests(unittest.TestCase):
             if item["namespace"] == "visual.category"
         ]
         self.assertEqual(len(categories), 3)
-        self.assertTrue(all(item["value"]["group"] in {"format", "subject", "activity", "scene"} for item in categories))
+        self.assertTrue(
+            all(
+                item["value"]["group"] in DEFAULT_CATEGORIES
+                for item in categories
+            )
+        )
 
     def test_corrupt_image_is_permanent_400(self) -> None:
         from tempfile import TemporaryDirectory

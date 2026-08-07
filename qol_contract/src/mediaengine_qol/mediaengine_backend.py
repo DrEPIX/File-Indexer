@@ -137,20 +137,35 @@ class MediaEngineBackend:
         has_more = len(rows) > plan.page_size
         rows = rows[: plan.page_size]
         items = [dict(row) for row in rows]
-        asset_ids = [int(item["id"]) for item in items]
 
         count_sql = f"SELECT COUNT(*) FROM assets a{join_fts} LEFT JOIN technical_metadata tm ON tm.asset_id=a.id{where}"
         total = int(self.engine.db.scalar(count_sql, params) or 0)
         facets: dict[str, Any] = {}
         if plan.include_facets:
+            # Facets describe the filtered result set, not merely the current
+            # page. The annotation repository deliberately caps a scoped
+            # facet at 5,000 ids, so select the same bounded population here.
+            # Page-only counts are actively misleading when the first page has
+            # a different label distribution from the remaining matches.
+            facet_rows = self.engine.db.query(
+                "SELECT a.id FROM assets a"
+                f"{join_fts} LEFT JOIN technical_metadata tm ON tm.asset_id=a.id"
+                f"{where} ORDER BY a.id LIMIT 5000",
+                params,
+            )
+            facet_asset_ids = [int(row["id"]) for row in facet_rows]
             requested = plan.facet_namespaces
             if requested:
                 facets = {
-                    name: self.engine.repos.annotations.facet(name, asset_ids=asset_ids)
+                    name: self.engine.repos.annotations.facet(
+                        name, asset_ids=facet_asset_ids
+                    )
                     for name in requested
                 }
             else:
-                facets = self.engine.repos.annotations.all_facets(asset_ids=asset_ids)
+                facets = self.engine.repos.annotations.all_facets(
+                    asset_ids=facet_asset_ids
+                )
 
         return {
             "items": items,
@@ -290,9 +305,14 @@ class MediaEngineBackend:
                 west = float(raw_west)
                 east = float(raw_east)
                 params.extend([south, north, west, east])
+                longitude = (
+                    "gx.max_lon>=? AND gx.min_lon<=?"
+                    if west <= east
+                    else "(gx.max_lon>=? OR gx.min_lon<=?)"
+                )
                 return (
                     "EXISTS (SELECT 1 FROM asset_geo gx WHERE gx.id=a.id "
-                    "AND gx.max_lat>=? AND gx.min_lat<=? AND gx.max_lon>=? AND gx.min_lon<=?)"
+                    f"AND gx.max_lat>=? AND gx.min_lat<=? AND {longitude})"
                 )
             if operator == "within_radius":
                 lat = float(value["latitude"])

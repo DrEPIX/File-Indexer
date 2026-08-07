@@ -13,7 +13,9 @@ uses the existing `.venv` and opens the GUI with `pythonw.exe`, so no console
 window is required. You can also double-click `File Indexer V1.pyw` when `.pyw`
 files are associated with Python.
 
-The first launch asks for a media folder. From then on the desktop app can:
+The first launch opens a short visual tour and then offers to add a media
+folder. The tour and searchable Help Center remain available inside the app.
+From then on the desktop app can:
 
 - add and recursively scan folders with live progress and safe cancellation;
 - search filenames, extracted text, tags, and arbitrary analyzer labels;
@@ -24,11 +26,21 @@ The first launch asks for a media folder. From then on the desktop app can:
 - add user-owned labels that machine analyzers cannot overwrite;
 - review scan history and extraction errors;
 - run enabled analyzers and perform a database integrity check;
-- change library roots and index/cache locations from Settings.
+- change library roots and index/cache locations from Settings;
+- switch between Claude Light, Midnight Ink, Sage Studio, and High Contrast;
+- adjust text from 85â€“140%, choose layout density, or reduce motion;
+- adapt from a full desktop workspace down to a compact 900Ã—620 window.
+
+Useful keyboard shortcuts:
+
+- `Ctrl+K` focuses the library search;
+- `Ctrl+L` returns to Library;
+- `Ctrl+,` opens Settings;
+- `F1` opens the searchable Help Center;
+- `Esc` clears the search on the active page.
 
 V1 stores its configuration and index under
-`%LOCALAPPDATA%\File Indexer V1` by default. Placing a `config.yaml` beside a
-packaged executable switches it to portable mode. The GUI embeds the backend
+`%LOCALAPPDATA%\File Indexer V1` by default. The GUI embeds the backend
 directly; neither the CLI nor the HTTP server is involved.
 
 ## Install from source
@@ -54,22 +66,18 @@ The standalone backend remains available through the documented Python API,
 CLI, and optional FastAPI service. See [backend and API usage](docs/README.md)
 and [deployment](docs/DEPLOYMENT.md).
 
-## Build a distributable Windows app
+## Build the Windows installer
 
-Install PyInstaller in the development environment once, then run the build
-script. End users only need the resulting folder; they do not need Python or a
-terminal.
+Install PyInstaller in the development environment once, then build the full
+MSI. The script downloads a pinned WiX toolchain into the ignored `.tools`
+directory when needed. End users do not need Python or a terminal.
 
 ```powershell
 .\.venv\Scripts\python.exe -m pip install pyinstaller
-.\scripts\build_v1.ps1 -Clean
+.\scripts\build_installer.ps1 -Clean
 ```
 
-The executable is written to
-`dist\File Indexer V1\File Indexer V1.exe`. Keep the files in that folder
-together when copying it to another computer.
-
-For a temporary single-file portable build, use
-`.\scripts\build_v1.ps1 -Clean -OneFile`. It writes
-`dist\portable\File Indexer V1.exe`; optional AI model services and their
-multi-gigabyte weights remain external.
+The result is `dist\installer\File Indexer V1 Setup.msi`. It installs the app,
+Start Menu shortcut, desktop shortcut, and Apps & Features uninstaller for the
+current Windows user. Optional AI model services and their multi-gigabyte
+weights remain external.

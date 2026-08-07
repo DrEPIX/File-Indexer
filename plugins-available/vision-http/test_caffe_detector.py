@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -11,6 +12,10 @@ from unittest.mock import patch
 
 import numpy as np
 from PIL import Image
+
+PLUGIN_ROOT = Path(__file__).resolve().parent
+if str(PLUGIN_ROOT) not in sys.path:
+    sys.path.insert(0, str(PLUGIN_ROOT))
 
 from vision_model import CaffeDetector, configured_caffe_detectors
 

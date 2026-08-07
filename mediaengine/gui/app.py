@@ -15,7 +15,6 @@ import subprocess
 import sys
 import threading
 import traceback
-import webbrowser
 from collections.abc import Callable
 from functools import partial
 from pathlib import Path
@@ -26,7 +25,6 @@ from tkinter import (
     RIGHT,
     VERTICAL,
     BooleanVar,
-    Canvas,
     Listbox,
     Menu,
     StringVar,
@@ -46,24 +44,21 @@ from .. import __version__
 from ..config import Config
 from ..core.control import CancelToken, ProgressEvent
 from ..engine import MediaEngine
-from ..errors import MediaEngineError, NotFoundError
-from ..search import Query, parse_query
+from ..search import parse_query
 from ..util import human_bytes, setup_logging
+from .appearance import (
+    THEMES,
+    GradientHeader,
+    PlaceholderEntry,
+    UISettings,
+    load_ui_settings,
+    mix_color,
+    save_ui_settings,
+)
 from .config_store import APP_NAME, load_desktop_config, save_desktop_config
+from .tutorials import HelpCenterDialog, TutorialDialog
 
 _LOG = logging.getLogger(__name__)
-
-BG = "#0b1020"
-PANEL = "#121a2e"
-PANEL_2 = "#18233b"
-TEXT = "#edf2ff"
-MUTED = "#9aa9c5"
-ACCENT = "#ff6b4a"
-ACCENT_DARK = "#d94b30"
-TEAL = "#4dd7c8"
-BORDER = "#263653"
-ERROR = "#ff7387"
-
 
 def format_bytes(value: object) -> str:
     """Format an arbitrary database value as a human-readable byte count."""
@@ -107,6 +102,9 @@ class FileIndexerV1:
     def __init__(self, root: Tk, config: Config | None = None) -> None:
         self.root = root
         self.config = config or load_desktop_config()
+        self.ui_settings = load_ui_settings(self.config)
+        self.theme = THEMES[self.ui_settings.theme]
+        self.scale = self.ui_settings.text_scale / 100.0
         self.engine = MediaEngine(self.config)
         self.events: queue.Queue[tuple[Callable[..., Any], tuple[Any, ...]]] = queue.Queue()
         self.worker_lock = threading.Lock()
@@ -122,10 +120,22 @@ class FileIndexerV1:
         self.thumbnail_image: ImageTk.PhotoImage | None = None
         self.nav_buttons: dict[str, ttk.Button] = {}
         self.pages: dict[str, ttk.Frame] = {}
+        self.current_page = "library"
+        self.compact_layout = False
+        self.resize_job: str | None = None
+        self.stats_cards: list[ttk.Frame] = []
+        self.custom_text_widgets: list[Any] = []
+        self.nav_labels = {
+            "library": ("Library", "▦"),
+            "activity": ("Activity", "◷"),
+            "plugins": ("Analyzers", "◇"),
+            "settings": ("Settings", "⚙"),
+        }
 
-        self.status_text = StringVar(value="Starting the library…")
         self.progress_text = StringVar(value="Ready")
         self.search_text = StringVar()
+        self.activity_search_text = StringVar()
+        self.plugin_search_text = StringVar()
         self.type_filter = StringVar(value="all")
         self.result_count = StringVar(value="0 items")
         self.page_text = StringVar(value="Page 1")
@@ -133,11 +143,21 @@ class FileIndexerV1:
         self.rehash_var = BooleanVar(value=False)
         self.db_path_var = StringVar(value=str(self.config.storage.db_path))
         self.cache_path_var = StringVar(value=str(self.config.storage.derivatives_path))
+        self.theme_var = StringVar(value=self.ui_settings.theme)
+        self.density_var = StringVar(value=self.ui_settings.density)
+        self.text_scale_var = StringVar(value=str(self.ui_settings.text_scale))
+        self.reduced_motion_var = BooleanVar(value=self.ui_settings.reduced_motion)
 
         self._configure_window()
         self._configure_style()
         self._build_shell()
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
+        self.root.bind("<Configure>", self._schedule_responsive_layout)
+        self.root.bind("<Control-k>", lambda _: self.focus_search())
+        self.root.bind("<Control-l>", lambda _: self.show_page("library"))
+        self.root.bind("<Control-comma>", lambda _: self.show_page("settings"))
+        self.root.bind("<F1>", lambda _: self.open_help())
+        self.root.bind("<Escape>", lambda _: self.clear_active_search())
         self.root.after(60, self._drain_events)
         self._start_engine()
 
@@ -145,90 +165,109 @@ class FileIndexerV1:
 
     def _configure_window(self) -> None:
         self.root.title(f"{APP_NAME} — Special Edition")
-        self.root.geometry("1320x820")
-        self.root.minsize(1040, 680)
-        self.root.configure(bg=BG)
+        self.root.geometry("1280x800")
+        self.root.minsize(900, 620)
+        self.root.configure(bg=self.theme.bg)
 
     def _configure_style(self) -> None:
-        style = ttk.Style(self.root)
-        style.theme_use("clam")
-        style.configure(".", background=BG, foreground=TEXT, font=("Segoe UI", 10))
-        style.configure("TFrame", background=BG)
-        style.configure("Panel.TFrame", background=PANEL)
-        style.configure("Panel2.TFrame", background=PANEL_2)
-        style.configure("TLabel", background=BG, foreground=TEXT)
-        style.configure("Muted.TLabel", background=BG, foreground=MUTED)
-        style.configure("Panel.TLabel", background=PANEL, foreground=TEXT)
-        style.configure("PanelMuted.TLabel", background=PANEL, foreground=MUTED)
-        style.configure("Title.TLabel", font=("Segoe UI Semibold", 22), foreground=TEXT)
-        style.configure("Hero.TLabel", font=("Segoe UI Semibold", 30), foreground=TEXT)
-        style.configure("CardValue.TLabel", background=PANEL, font=("Segoe UI Semibold", 22), foreground=TEXT)
-        style.configure("CardLabel.TLabel", background=PANEL, foreground=MUTED)
-        style.configure("TButton", background=PANEL_2, foreground=TEXT, padding=(13, 8), borderwidth=0)
-        style.map("TButton", background=[("active", BORDER), ("pressed", "#314362")])
-        style.configure("Accent.TButton", background=ACCENT, foreground="#ffffff", padding=(14, 9))
-        style.map("Accent.TButton", background=[("active", ACCENT_DARK), ("pressed", "#b83b26")])
-        style.configure("Nav.TButton", anchor="w", background=BG, padding=(18, 12))
-        style.map("Nav.TButton", background=[("active", PANEL_2)])
-        style.configure("Selected.Nav.TButton", anchor="w", background=PANEL_2, foreground=TEAL, padding=(18, 12))
-        style.configure("Treeview", background=PANEL, fieldbackground=PANEL, foreground=TEXT, rowheight=32, borderwidth=0)
-        style.map("Treeview", background=[("selected", "#244963")], foreground=[("selected", "#ffffff")])
-        style.configure("Treeview.Heading", background=PANEL_2, foreground=MUTED, relief="flat", padding=8)
-        style.map("Treeview.Heading", background=[("active", BORDER)])
-        style.configure("TEntry", fieldbackground=PANEL_2, foreground=TEXT, insertcolor=TEXT, bordercolor=BORDER, padding=8)
-        style.configure("TCombobox", fieldbackground=PANEL_2, background=PANEL_2, foreground=TEXT, arrowcolor=TEXT, padding=6)
-        style.configure("TNotebook", background=BG, borderwidth=0)
-        style.configure("TNotebook.Tab", background=PANEL, foreground=MUTED, padding=(16, 9))
-        style.map("TNotebook.Tab", background=[("selected", PANEL_2)], foreground=[("selected", TEXT)])
-        style.configure("Horizontal.TProgressbar", background=TEAL, troughcolor=PANEL_2, borderwidth=0)
-        style.configure("TCheckbutton", background=BG, foreground=TEXT)
-        style.map("TCheckbutton", background=[("active", BG)])
-        style.configure("TSeparator", background=BORDER)
+        t = self.theme
+        def size(value: int) -> int:
+            return max(8, round(value * self.scale))
+        density = {"Compact": 27, "Comfortable": 34, "Cozy": 40}[self.ui_settings.density]
+        button_y = {"Compact": 6, "Comfortable": 9, "Cozy": 12}[self.ui_settings.density]
+        self.style = ttk.Style(self.root)
+        self.style.theme_use("clam")
+        self.style.configure(".", background=t.bg, foreground=t.text, font=("Segoe UI", size(10)))
+        self.style.configure("TFrame", background=t.bg)
+        self.style.configure("Panel.TFrame", background=t.panel)
+        self.style.configure("Panel2.TFrame", background=t.panel_alt)
+        self.style.configure("Raised.TFrame", background=t.raised)
+        self.style.configure("TLabel", background=t.bg, foreground=t.text)
+        self.style.configure("Muted.TLabel", background=t.bg, foreground=t.muted)
+        self.style.configure("Panel.TLabel", background=t.panel, foreground=t.text)
+        self.style.configure("PanelMuted.TLabel", background=t.panel, foreground=t.muted)
+        self.style.configure("Raised.TLabel", background=t.raised, foreground=t.text)
+        self.style.configure("Title.TLabel", font=("Segoe UI Semibold", size(23)), foreground=t.text)
+        self.style.configure("Subtitle.TLabel", font=("Segoe UI Semibold", size(16)), foreground=t.text)
+        self.style.configure("TutorialTitle.TLabel", font=("Segoe UI Semibold", size(25)), foreground=t.text)
+        self.style.configure("Eyebrow.TLabel", font=("Segoe UI Semibold", size(9)), foreground=t.accent)
+        self.style.configure("Body.TLabel", font=("Segoe UI", size(11)), foreground=t.text)
+        self.style.configure("CardValue.TLabel", background=t.panel, font=("Segoe UI Semibold", size(23)), foreground=t.text)
+        self.style.configure("CardLabel.TLabel", background=t.panel, foreground=t.muted)
+        self.style.configure("CardAccent.TLabel", background=t.panel, foreground=t.accent, font=("Segoe UI Semibold", size(9)))
+        self.style.configure("TButton", background=t.panel_alt, foreground=t.text, padding=(13, button_y), borderwidth=0)
+        self.style.map("TButton", background=[("active", t.border), ("pressed", t.selection)])
+        self.style.configure("Accent.TButton", background=t.accent, foreground="#ffffff", padding=(15, button_y + 1))
+        self.style.map("Accent.TButton", background=[("active", t.accent_hover), ("pressed", t.accent_hover)])
+        self.style.configure("Quiet.TButton", background=t.bg, foreground=t.muted, padding=(10, button_y))
+        self.style.configure("Chip.TButton", background=t.raised, foreground=t.text, padding=(11, 5), borderwidth=1, bordercolor=t.border)
+        self.style.map("Chip.TButton", background=[("active", t.selection)], foreground=[("active", t.text)])
+        self.style.configure("Nav.TButton", anchor="w", background=t.bg, foreground=t.muted, padding=(17, 12))
+        self.style.map("Nav.TButton", background=[("active", t.panel_alt)], foreground=[("active", t.text)])
+        self.style.configure("Selected.Nav.TButton", anchor="w", background=t.panel_alt, foreground=t.accent, padding=(17, 12))
+        self.style.configure("CompactNav.TButton", anchor="center", background=t.bg, foreground=t.muted, padding=(6, 13))
+        self.style.map("CompactNav.TButton", background=[("active", t.panel_alt)], foreground=[("active", t.text)])
+        self.style.configure("Selected.CompactNav.TButton", anchor="center", background=t.panel_alt, foreground=t.accent, padding=(6, 13))
+        self.style.configure("Treeview", background=t.panel, fieldbackground=t.panel, foreground=t.text, rowheight=round(density * self.scale), borderwidth=0)
+        self.style.map("Treeview", background=[("selected", t.selection)], foreground=[("selected", t.text)])
+        self.style.configure("Treeview.Heading", background=t.panel_alt, foreground=t.muted, relief="flat", padding=8)
+        self.style.map("Treeview.Heading", background=[("active", t.border)])
+        self.style.configure("TEntry", fieldbackground=t.panel, foreground=t.text, insertcolor=t.text, bordercolor=t.border, lightcolor=t.border, darkcolor=t.border, padding=10)
+        self.style.configure("Placeholder.TEntry", fieldbackground=t.panel, foreground=t.muted, insertcolor=t.muted, bordercolor=t.border, padding=10)
+        self.style.configure("TCombobox", fieldbackground=t.panel, background=t.panel, foreground=t.text, arrowcolor=t.text, bordercolor=t.border, padding=7)
+        self.style.map("TCombobox", fieldbackground=[("readonly", t.panel)], foreground=[("readonly", t.text)])
+        self.style.configure("TNotebook", background=t.bg, borderwidth=0)
+        self.style.configure("TNotebook.Tab", background=t.panel_alt, foreground=t.muted, padding=(16, 9))
+        self.style.map("TNotebook.Tab", background=[("selected", t.panel)], foreground=[("selected", t.text)])
+        self.style.configure("Horizontal.TProgressbar", background=t.secondary, troughcolor=t.panel_alt, borderwidth=0)
+        self.style.configure("TCheckbutton", background=t.bg, foreground=t.text)
+        self.style.map("TCheckbutton", background=[("active", t.bg)])
+        self.style.configure("TScale", background=t.bg, troughcolor=t.panel_alt)
+        self.style.configure("TSeparator", background=t.border)
 
     def _build_shell(self) -> None:
-        header = ttk.Frame(self.root, style="Panel.TFrame", padding=(22, 14))
-        header.pack(fill="x")
-        brand = ttk.Frame(header, style="Panel.TFrame")
-        brand.pack(side=LEFT)
-        ttk.Label(brand, text="FILE INDEXER", style="Panel.TLabel", font=("Segoe UI Semibold", 16)).pack(side=LEFT)
-        ttk.Label(brand, text=" V1 ", background=ACCENT, foreground="#ffffff", font=("Segoe UI Semibold", 9)).pack(side=LEFT, padx=8)
-        ttk.Label(brand, text="SPECIAL EDITION", style="PanelMuted.TLabel", font=("Segoe UI", 9)).pack(side=LEFT)
-        ttk.Label(header, textvariable=self.status_text, style="PanelMuted.TLabel").pack(side=RIGHT)
+        self.header = GradientHeader(
+            self.root,
+            self.theme,
+            scale=self.scale,
+            reduced_motion=self.ui_settings.reduced_motion,
+            on_help=self.open_help,
+            on_customize=lambda: self.show_page("settings"),
+        )
+        self.header.pack(fill="x")
 
-        body = ttk.Frame(self.root)
-        body.pack(fill=BOTH, expand=True)
-        sidebar = ttk.Frame(body, width=190, padding=(10, 20))
-        sidebar.pack(side=LEFT, fill="y")
-        sidebar.pack_propagate(False)
-        for key, label in (
-            ("library", "▦   Library"),
-            ("activity", "◷   Activity"),
-            ("plugins", "◇   Analyzers"),
-            ("settings", "⚙   Settings"),
-        ):
+        self.body = ttk.Frame(self.root)
+        self.body.pack(fill=BOTH, expand=True)
+        self.sidebar = ttk.Frame(self.body, width=186, padding=(10, 20))
+        self.sidebar.pack(side=LEFT, fill="y")
+        self.sidebar.pack_propagate(False)
+        for key, (label, _) in self.nav_labels.items():
             button = ttk.Button(
-                sidebar,
-                text=label,
+                self.sidebar,
+                text=f"  {label}",
                 style="Nav.TButton",
                 command=partial(self.show_page, key),
             )
             button.pack(fill="x", pady=2)
             self.nav_buttons[key] = button
-        ttk.Label(sidebar, text=f"Engine {__version__}", style="Muted.TLabel").pack(side="bottom", pady=10)
+        self.engine_version_label = ttk.Label(self.sidebar, text=f"Engine {__version__}", style="Muted.TLabel")
+        self.engine_version_label.pack(side="bottom", pady=10)
 
-        self.content = ttk.Frame(body, padding=(4, 8, 18, 8))
+        self.content = ttk.Frame(self.body, padding=(4, 8, 18, 8))
         self.content.pack(side=LEFT, fill=BOTH, expand=True)
         self.pages["library"] = self._build_library_page(self.content)
         self.pages["activity"] = self._build_activity_page(self.content)
         self.pages["plugins"] = self._build_plugins_page(self.content)
         self.pages["settings"] = self._build_settings_page(self.content)
 
-        footer = ttk.Frame(self.root, style="Panel.TFrame", padding=(18, 8))
-        footer.pack(fill="x")
-        self.progress = ttk.Progressbar(footer, mode="determinate", length=240)
+        self.footer = ttk.Frame(self.root, style="Panel.TFrame", padding=(18, 9))
+        # Pack the footer before the expanding body in the geometry order so a
+        # content-heavy page can never push job status below the window edge.
+        self.footer.pack(side="bottom", fill="x", before=self.body)
+        self.progress = ttk.Progressbar(self.footer, mode="determinate", length=240)
         self.progress.pack(side=LEFT, padx=(0, 12))
-        ttk.Label(footer, textvariable=self.progress_text, style="PanelMuted.TLabel").pack(side=LEFT)
-        self.cancel_button = ttk.Button(footer, text="Cancel", command=self.cancel_job, state="disabled")
+        ttk.Label(self.footer, textvariable=self.progress_text, style="PanelMuted.TLabel").pack(side=LEFT)
+        self.cancel_button = ttk.Button(self.footer, text="Cancel", command=self.cancel_job, state="disabled")
         self.cancel_button.pack(side=RIGHT)
         self.show_page("library")
 
@@ -241,40 +280,81 @@ class FileIndexerV1:
         return page
 
     def _build_library_page(self, parent: ttk.Frame) -> ttk.Frame:
-        page = self._page(parent, "Your library", "Search, inspect, and add media without opening a terminal.")
-        toolbar = ttk.Frame(page)
-        toolbar.pack(fill="x", pady=(0, 10))
-        search = ttk.Entry(toolbar, textvariable=self.search_text)
-        search.pack(side=LEFT, fill="x", expand=True)
-        search.bind("<Return>", lambda _: self.run_search(reset=True))
-        types = ttk.Combobox(toolbar, textvariable=self.type_filter, values=("all", "image", "video", "audio", "document", "other"), state="readonly", width=11)
-        types.pack(side=LEFT, padx=8)
-        types.bind("<<ComboboxSelected>>", lambda _: self.run_search(reset=True))
-        ttk.Button(toolbar, text="Search", command=lambda: self.run_search(reset=True)).pack(side=LEFT)
-        ttk.Button(toolbar, text="Add & Scan Folder", style="Accent.TButton", command=self.choose_scan_folder).pack(side=LEFT, padx=(8, 0))
+        page = self._page(parent, "Your library", "Find anything by filename, metadata, document text, or analyzer label.")
+        self.library_toolbar = ttk.Frame(page)
+        self.library_toolbar.pack(fill="x", pady=(0, 7))
+        self.library_toolbar.columnconfigure(0, weight=1)
+        self.search_entry = PlaceholderEntry(
+            self.library_toolbar,
+            self.search_text,
+            "Search names, text, places, and labels…   (Ctrl+K)",
+        )
+        self.search_entry.grid(row=0, column=0, sticky="ew")
+        self.search_entry.bind("<Return>", lambda _: self.run_search(reset=True))
+        self.search_clear_button = ttk.Button(self.library_toolbar, text="Clear", style="Quiet.TButton", command=self.clear_search)
+        self.search_clear_button.grid(row=0, column=1, padx=(6, 0))
+        self.type_selector = ttk.Combobox(
+            self.library_toolbar,
+            textvariable=self.type_filter,
+            values=("all", "image", "video", "audio", "document", "other"),
+            state="readonly",
+            width=11,
+        )
+        self.type_selector.grid(row=0, column=2, padx=7)
+        self.type_selector.bind("<<ComboboxSelected>>", lambda _: self.run_search(reset=True))
+        self.search_button = ttk.Button(self.library_toolbar, text="Search", command=lambda: self.run_search(reset=True))
+        self.search_button.grid(row=0, column=3)
+        self.add_scan_button = ttk.Button(self.library_toolbar, text="Add & scan folder", style="Accent.TButton", command=self.choose_scan_folder)
+        self.add_scan_button.grid(row=0, column=4, padx=(7, 0))
 
-        cards = ttk.Frame(page)
-        cards.pack(fill="x", pady=(0, 10))
+        self.quick_filters = ttk.Frame(page)
+        self.quick_filters.pack(fill="x", pady=(0, 12))
+        ttk.Label(self.quick_filters, text="Try", style="Muted.TLabel").pack(side=LEFT, padx=(1, 8))
+        for label, query in (
+            ("Recent", "after:2025 sort:-captured"),
+            ("Images", "type:image"),
+            ("Videos", "type:video"),
+            ("With location", "has:gps"),
+            ("Favorites", "user.label:favorite"),
+        ):
+            ttk.Button(
+                self.quick_filters,
+                text=label,
+                style="Chip.TButton",
+                command=partial(self.apply_quick_search, query),
+            ).pack(side=LEFT, padx=(0, 6))
+        ttk.Button(self.quick_filters, text="Search tips", style="Quiet.TButton", command=self.open_help).pack(side=RIGHT)
+
+        self.cards_container = ttk.Frame(page)
+        self.cards_container.pack(fill="x", pady=(0, 12))
         self.card_values: dict[str, StringVar] = {}
-        for key, label in (("assets", "Indexed items"), ("images", "Images"), ("videos", "Videos"), ("documents", "Documents")):
-            card = ttk.Frame(cards, style="Panel.TFrame", padding=(15, 10))
-            card.pack(side=LEFT, fill="x", expand=True, padx=(0, 8) if key != "documents" else 0)
+        for index, (key, label, eyebrow) in enumerate((
+            ("assets", "Indexed items", "LIBRARY"),
+            ("images", "Images", "VISUAL"),
+            ("videos", "Videos", "MOTION"),
+            ("documents", "Documents", "TEXT"),
+        )):
+            card = ttk.Frame(self.cards_container, style="Panel.TFrame", padding=(16, 11))
+            card.grid(row=0, column=index, sticky="nsew", padx=(0, 8) if index < 3 else 0)
+            self.cards_container.columnconfigure(index, weight=1, uniform="stats")
+            self.stats_cards.append(card)
             value = StringVar(value="—")
             self.card_values[key] = value
+            ttk.Label(card, text=eyebrow, style="CardAccent.TLabel").pack(anchor="w")
             ttk.Label(card, textvariable=value, style="CardValue.TLabel").pack(anchor="w")
             ttk.Label(card, text=label, style="CardLabel.TLabel").pack(anchor="w")
 
-        paned = ttk.Panedwindow(page, orient="horizontal")
-        paned.pack(fill=BOTH, expand=True)
-        results_panel = ttk.Frame(paned, style="Panel.TFrame", padding=8)
-        detail_panel = ttk.Frame(paned, style="Panel.TFrame", padding=12)
-        paned.add(results_panel, weight=4)
-        paned.add(detail_panel, weight=2)
+        self.library_paned = ttk.Panedwindow(page, orient="horizontal")
+        self.library_paned.pack(fill=BOTH, expand=True)
+        self.results_panel = ttk.Frame(self.library_paned, style="Panel.TFrame", padding=10)
+        self.detail_panel = ttk.Frame(self.library_paned, style="Panel.TFrame", padding=13)
+        self.library_paned.add(self.results_panel, weight=4)
+        self.library_paned.add(self.detail_panel, weight=2)
 
-        top = ttk.Frame(results_panel, style="Panel.TFrame")
+        top = ttk.Frame(self.results_panel, style="Panel.TFrame")
         top.pack(fill="x", pady=(0, 6))
         ttk.Label(top, textvariable=self.result_count, style="PanelMuted.TLabel").pack(side=LEFT)
-        self.results = ttk.Treeview(results_panel, columns=("name", "type", "size", "date", "dimensions"), show="headings", selectmode="browse")
+        self.results = ttk.Treeview(self.results_panel, columns=("name", "type", "size", "date", "dimensions"), show="headings", selectmode="browse")
         for column, label, width, anchor in (
             ("name", "Name", 285, "w"), ("type", "Type", 80, "center"),
             ("size", "Size", 85, "e"), ("date", "Captured", 145, "w"),
@@ -283,14 +363,14 @@ class FileIndexerV1:
             self.results.heading(column, text=label)
             tree_anchor = cast(Literal["w", "center", "e"], anchor)
             self.results.column(column, width=width, minwidth=55, anchor=tree_anchor)
-        scroll = ttk.Scrollbar(results_panel, orient=VERTICAL, command=self.results.yview)
+        scroll = ttk.Scrollbar(self.results_panel, orient=VERTICAL, command=self.results.yview)
         self.results.configure(yscrollcommand=scroll.set)
         scroll.pack(side=RIGHT, fill="y")
         self.results.pack(fill=BOTH, expand=True)
         self.results.bind("<<TreeviewSelect>>", self._result_selected)
         self.results.bind("<Double-1>", lambda _: self.open_selected())
         self.results.bind("<Button-3>", self._result_menu)
-        pager = ttk.Frame(results_panel, style="Panel.TFrame")
+        pager = ttk.Frame(self.results_panel, style="Panel.TFrame")
         pager.pack(fill="x", pady=(8, 0))
         self.prev_button = ttk.Button(pager, text="← Previous", command=lambda: self.change_page(-1), state="disabled")
         self.prev_button.pack(side=LEFT)
@@ -299,15 +379,25 @@ class FileIndexerV1:
         self.next_button.pack(side=LEFT)
         ttk.Button(pager, text="Refresh", command=self.refresh_all).pack(side=RIGHT)
 
-        self.preview = ttk.Label(detail_panel, text="Select an item", style="PanelMuted.TLabel", anchor="center")
-        self.preview.pack(fill="x", pady=(4, 12))
-        detail_actions = ttk.Frame(detail_panel, style="Panel.TFrame")
+        ttk.Label(self.detail_panel, text="INSPECTOR", style="CardAccent.TLabel").pack(anchor="w", pady=(0, 5))
+        self.preview = ttk.Label(
+            self.detail_panel,
+            text="◇\n\nSelect an item to see its preview, metadata, labels, and every known file location.",
+            style="PanelMuted.TLabel",
+            anchor="center",
+            justify="center",
+            wraplength=340,
+            font=("Segoe UI", max(10, round(11 * self.scale))),
+        )
+        self.preview.pack(fill="x", pady=(10, 12))
+        detail_actions = ttk.Frame(self.detail_panel, style="Panel.TFrame")
         detail_actions.pack(fill="x", pady=(0, 8))
         ttk.Button(detail_actions, text="Open", command=self.open_selected).pack(side=LEFT)
         ttk.Button(detail_actions, text="Show in folder", command=self.reveal_selected).pack(side=LEFT, padx=5)
         ttk.Button(detail_actions, text="Add label", command=self.add_label).pack(side=LEFT)
-        self.detail = Text(detail_panel, bg=PANEL, fg=TEXT, insertbackground=TEXT, relief="flat", wrap="word", font=("Consolas", 9), padx=4, pady=4, state="disabled")
+        self.detail = Text(self.detail_panel, bg=self.theme.panel, fg=self.theme.text, insertbackground=self.theme.text, relief="flat", wrap="word", font=("Cascadia Mono", max(8, round(9 * self.scale))), padx=4, pady=4, state="disabled")
         self.detail.pack(fill=BOTH, expand=True)
+        self.custom_text_widgets.append(self.detail)
         return page
 
     def _build_activity_page(self, parent: ttk.Frame) -> ttk.Frame:
@@ -316,6 +406,9 @@ class FileIndexerV1:
         actions.pack(fill="x", pady=(0, 10))
         ttk.Button(actions, text="Scan all configured folders", style="Accent.TButton", command=self.scan_configured).pack(side=LEFT)
         ttk.Button(actions, text="Refresh", command=self.refresh_activity).pack(side=LEFT, padx=8)
+        self.activity_search = PlaceholderEntry(actions, self.activity_search_text, "Filter scans and errors…", width=34)
+        self.activity_search.pack(side=RIGHT)
+        self.activity_search.bind("<KeyRelease>", lambda _: self.filter_activity())
         notebook = ttk.Notebook(page)
         notebook.pack(fill=BOTH, expand=True)
         scans_frame = ttk.Frame(notebook, style="Panel.TFrame", padding=8)
@@ -336,27 +429,66 @@ class FileIndexerV1:
         return page
 
     def _build_plugins_page(self, parent: ttk.Frame) -> ttk.Frame:
-        page = self._page(parent, "Analyzers", "Optional processors can add searchable labels without changing the core.")
+        page = self._page(parent, "Analyzer shop", "Turn on built-ins, connect local APIs, and run optional AI without changing the core.")
         actions = ttk.Frame(page)
         actions.pack(fill="x", pady=(0, 10))
-        ttk.Button(actions, text="Refresh analyzers", command=self.refresh_plugins).pack(side=LEFT)
+        ttk.Button(actions, text="Refresh", command=self.refresh_plugins).pack(side=LEFT)
         ttk.Button(actions, text="Run selected", style="Accent.TButton", command=self.run_selected_plugin).pack(side=LEFT, padx=8)
-        self.plugins_tree = ttk.Treeview(page, columns=("id", "version", "transport", "enabled", "state", "description"), show="headings")
-        for col, label, width in (("id", "Analyzer", 210), ("version", "Version", 80), ("transport", "Transport", 100), ("enabled", "Enabled", 75), ("state", "Tasks", 150), ("description", "Description", 400)):
+        ttk.Button(actions, text="Enable / Disable", command=self.toggle_selected_plugin).pack(side=LEFT)
+        ttk.Button(actions, text="Add API…", command=self.add_plugin_api).pack(side=LEFT, padx=8)
+        ttk.Button(actions, text="LM Studio…", command=self.configure_lm_studio).pack(side=LEFT)
+        self.plugin_search = PlaceholderEntry(actions, self.plugin_search_text, "Search analyzers…", width=30)
+        self.plugin_search.pack(side=RIGHT)
+        self.plugin_search.bind("<KeyRelease>", lambda _: self.filter_plugins())
+        self.plugins_tree = ttk.Treeview(page, columns=("id", "version", "kind", "enabled", "state", "description"), show="headings")
+        for col, label, width in (("id", "Analyzer", 210), ("version", "Version", 80), ("kind", "Kind", 110), ("enabled", "Enabled", 75), ("state", "Tasks", 150), ("description", "Description", 400)):
             self.plugins_tree.heading(col, text=label)
             self.plugins_tree.column(col, width=width, anchor="w")
         self.plugins_tree.pack(fill=BOTH, expand=True)
         return page
 
     def _build_settings_page(self, parent: ttk.Frame) -> ttk.Frame:
-        page = self._page(parent, "Settings", "V1 stores its index separately and never modifies original files.")
-        paths = ttk.Frame(page, style="Panel.TFrame", padding=16)
+        page = self._page(parent, "Settings", "Customize the workspace and decide exactly what V1 indexes.")
+        notebook = ttk.Notebook(page)
+        notebook.pack(fill=BOTH, expand=True)
+        appearance_tab = ttk.Frame(notebook, padding=18)
+        storage_tab = ttk.Frame(notebook, padding=18)
+        scan_tab = ttk.Frame(notebook, padding=18)
+        notebook.add(appearance_tab, text="Appearance")
+        notebook.add(storage_tab, text="Library & storage")
+        notebook.add(scan_tab, text="Scanning & maintenance")
+
+        appearance = ttk.Frame(appearance_tab, style="Panel.TFrame", padding=20)
+        appearance.pack(fill="x")
+        ttk.Label(appearance, text="Workspace appearance", style="Panel.TLabel", font=("Segoe UI Semibold", round(14 * self.scale))).grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 4))
+        ttk.Label(appearance, text="Changes preview immediately and persist for the next launch.", style="PanelMuted.TLabel").grid(row=1, column=0, columnspan=3, sticky="w", pady=(0, 16))
+        ttk.Label(appearance, text="Color theme", style="PanelMuted.TLabel").grid(row=2, column=0, sticky="w", pady=6)
+        themes = ttk.Combobox(appearance, textvariable=self.theme_var, values=tuple(THEMES), state="readonly", width=24)
+        themes.grid(row=2, column=1, sticky="w", pady=6)
+        themes.bind("<<ComboboxSelected>>", lambda _: self.preview_appearance())
+        ttk.Label(appearance, text="Text size", style="PanelMuted.TLabel").grid(row=3, column=0, sticky="w", pady=6)
+        scale_choices = ttk.Combobox(appearance, textvariable=self.text_scale_var, values=("85", "90", "100", "110", "120", "130", "140"), state="readonly", width=10)
+        scale_choices.grid(row=3, column=1, sticky="w", pady=6)
+        scale_choices.bind("<<ComboboxSelected>>", lambda _: self.preview_appearance())
+        ttk.Label(appearance, text="%", style="PanelMuted.TLabel").grid(row=3, column=2, sticky="w")
+        ttk.Label(appearance, text="Layout density", style="PanelMuted.TLabel").grid(row=4, column=0, sticky="w", pady=6)
+        density = ttk.Combobox(appearance, textvariable=self.density_var, values=("Compact", "Comfortable", "Cozy"), state="readonly", width=18)
+        density.grid(row=4, column=1, sticky="w", pady=6)
+        density.bind("<<ComboboxSelected>>", lambda _: self.preview_appearance())
+        ttk.Checkbutton(appearance, text="Reduce decorative motion", variable=self.reduced_motion_var, command=self.preview_appearance).grid(row=5, column=0, columnspan=2, sticky="w", pady=(10, 6))
+        ttk.Button(appearance, text="Save appearance", style="Accent.TButton", command=self.save_appearance).grid(row=6, column=0, sticky="w", pady=(14, 0))
+        ttk.Button(appearance, text="Replay quick tour", command=self.open_tutorial).grid(row=6, column=1, sticky="w", pady=(14, 0))
+        appearance.columnconfigure(1, weight=0)
+        appearance.columnconfigure(2, weight=1)
+
+        paths = ttk.Frame(storage_tab, style="Panel.TFrame", padding=16)
         paths.pack(fill="x", pady=(0, 12))
         ttk.Label(paths, text="Library folders", style="Panel.TLabel", font=("Segoe UI Semibold", 12)).pack(anchor="w")
         roots_area = ttk.Frame(paths, style="Panel.TFrame")
         roots_area.pack(fill="x", pady=8)
-        self.roots_list = Listbox(roots_area, height=6, bg=PANEL_2, fg=TEXT, selectbackground="#244963", relief="flat", highlightthickness=1, highlightbackground=BORDER, font=("Segoe UI", 10))
+        self.roots_list = Listbox(roots_area, height=6, bg=self.theme.panel_alt, fg=self.theme.text, selectbackground=self.theme.selection, selectforeground=self.theme.text, relief="flat", highlightthickness=1, highlightbackground=self.theme.border, font=("Segoe UI", max(9, round(10 * self.scale))))
         self.roots_list.pack(side=LEFT, fill="x", expand=True)
+        self.custom_text_widgets.append(self.roots_list)
         root_actions = ttk.Frame(roots_area, style="Panel.TFrame")
         root_actions.pack(side=LEFT, fill="y", padx=(8, 0))
         ttk.Button(root_actions, text="Add…", command=self.add_root).pack(fill="x")
@@ -364,7 +496,7 @@ class FileIndexerV1:
         for root_path in self.config.library.roots:
             self.roots_list.insert(END, str(root_path))
 
-        storage = ttk.Frame(page, style="Panel.TFrame", padding=16)
+        storage = ttk.Frame(storage_tab, style="Panel.TFrame", padding=16)
         storage.pack(fill="x", pady=(0, 12))
         ttk.Label(storage, text="Index storage", style="Panel.TLabel", font=("Segoe UI Semibold", 12)).grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 8))
         ttk.Label(storage, text="Database", style="PanelMuted.TLabel").grid(row=1, column=0, sticky="w", padx=(0, 10), pady=4)
@@ -375,12 +507,12 @@ class FileIndexerV1:
         ttk.Button(storage, text="Browse…", command=self.choose_cache).grid(row=2, column=2, padx=(8, 0))
         storage.columnconfigure(1, weight=1)
 
-        options = ttk.Frame(page, style="Panel.TFrame", padding=16)
+        options = ttk.Frame(scan_tab, style="Panel.TFrame", padding=18)
         options.pack(fill="x")
         ttk.Label(options, text="Scan options", style="Panel.TLabel", font=("Segoe UI Semibold", 12)).pack(anchor="w", pady=(0, 7))
         ttk.Checkbutton(options, text="Create previews and thumbnails", variable=self.derive_var).pack(anchor="w")
         ttk.Checkbutton(options, text="Force content re-hash on the next scan", variable=self.rehash_var).pack(anchor="w", pady=4)
-        row = ttk.Frame(page)
+        row = ttk.Frame(scan_tab)
         row.pack(fill="x", pady=12)
         ttk.Button(row, text="Save settings", style="Accent.TButton", command=self.save_settings).pack(side=LEFT)
         ttk.Button(row, text="Open data folder", command=lambda: self._open_path(self.config.storage.db_path.parent)).pack(side=LEFT, padx=8)
@@ -408,14 +540,14 @@ class FileIndexerV1:
         thread.start()
 
     def _engine_ready(self) -> None:
-        self.status_text.set("●  Library ready")
+        self.header.set_status("Library ready")
         self.progress_text.set("Ready")
         self.refresh_all()
-        if not self.config.library.roots:
-            self.root.after(250, self._first_run_prompt)
+        if not self.ui_settings.tutorial_completed:
+            self.root.after(350, self.open_tutorial)
 
     def _fatal_startup(self, exc: Exception, details: str) -> None:
-        self.status_text.set("●  Startup failed")
+        self.header.set_status("Startup failed")
         messagebox.showerror("File Indexer could not start", f"{exc}\n\nDetails were written to the engine log.")
         _LOG.error("desktop startup failed\n%s", details)
 
@@ -465,7 +597,7 @@ class FileIndexerV1:
         if long_job:
             self.long_job = thread
             self.cancel_button.configure(state="normal")
-            self.status_text.set(f"●  {name.capitalize()} running")
+            self.header.set_status(f"{name.capitalize()} running")
         thread.start()
         return True
 
@@ -479,7 +611,7 @@ class FileIndexerV1:
     def _long_job_finished(self) -> None:
         self.cancel_button.configure(state="disabled")
         self.cancel_token = None
-        self.status_text.set("●  Library ready")
+        self.header.set_status("Library ready")
         self.long_job = None
 
     def _job_running(self) -> bool:
@@ -490,14 +622,82 @@ class FileIndexerV1:
         with self.worker_lock:
             return bool(self.workers)
 
+    def _schedule_responsive_layout(self, event: Any) -> None:
+        if event.widget is not self.root:
+            return
+        if self.resize_job is not None:
+            self.root.after_cancel(self.resize_job)
+        self.resize_job = self.root.after(80, self._apply_responsive_layout)
+
+    def _apply_responsive_layout(self) -> None:
+        self.resize_job = None
+        width = self.root.winfo_width()
+        height = self.root.winfo_height()
+        compact = width < 1080
+        self.compact_layout = compact
+        self.sidebar.configure(width=76 if compact else 186)
+        self.content.configure(padding=(8, 8, 10 if compact else 18, 8))
+        for key, button in self.nav_buttons.items():
+            label, short = self.nav_labels[key]
+            button.configure(
+                text=short if compact else f"  {label}",
+                style=("Selected.CompactNav.TButton" if key == self.current_page else "CompactNav.TButton")
+                if compact
+                else ("Selected.Nav.TButton" if key == self.current_page else "Nav.TButton"),
+            )
+        self.engine_version_label.configure(text=__version__ if compact else f"Engine {__version__}")
+
+        # V1 never permits a window narrower than 900 px. Four compact cards
+        # still fit at that width and preserve far more vertical room for the
+        # actual library than a visually tempting 2x2 arrangement would.
+        columns = 4
+        for index, card in enumerate(self.stats_cards):
+            card.grid_forget()
+            row, column = divmod(index, columns)
+            card.grid(row=row, column=column, sticky="nsew", padx=(0, 8), pady=(0, 8))
+        for column in range(4):
+            self.cards_container.columnconfigure(column, weight=1 if column < columns else 0, uniform="stats")
+        if height < 700:
+            self.cards_container.pack_forget()
+        elif not self.cards_container.winfo_manager():
+            self.cards_container.pack(fill="x", pady=(0, 12), before=self.library_paned)
+
+        if width < 1060:
+            self.search_entry.grid(row=0, column=0, columnspan=4, sticky="ew")
+            self.search_clear_button.grid(row=0, column=4, padx=(6, 0))
+            self.type_selector.grid(row=1, column=0, sticky="w", pady=(7, 0), padx=0)
+            self.search_button.grid(row=1, column=1, sticky="w", pady=(7, 0), padx=7)
+            self.add_scan_button.grid(row=1, column=2, columnspan=3, sticky="e", pady=(7, 0), padx=0)
+            self.results.configure(displaycolumns=("name", "type", "size"))
+        else:
+            self.search_entry.grid(row=0, column=0, columnspan=1, sticky="ew")
+            self.search_clear_button.grid(row=0, column=1, padx=(6, 0), pady=0)
+            self.type_selector.grid(row=0, column=2, padx=7, pady=0)
+            self.search_button.grid(row=0, column=3, padx=0, pady=0)
+            self.add_scan_button.grid(row=0, column=4, padx=(7, 0), pady=0)
+            self.results.configure(displaycolumns=("name", "type", "size", "date", "dimensions"))
+
+        available = max(360, self.results_panel.winfo_width() - 35)
+        self.results.column("name", width=max(190, round(available * 0.40)))
+        self.results.column("type", width=max(68, round(available * 0.10)))
+        self.results.column("size", width=max(72, round(available * 0.10)))
+        self.results.column("date", width=max(120, round(available * 0.22)))
+        self.results.column("dimensions", width=max(90, round(available * 0.16)))
+
     # ── navigation and refresh ─────────────────────────────────────────────
 
     def show_page(self, name: str) -> None:
+        self.current_page = name
         for page in self.pages.values():
             page.pack_forget()
         self.pages[name].pack(fill=BOTH, expand=True)
         for key, button in self.nav_buttons.items():
-            button.configure(style="Selected.Nav.TButton" if key == name else "Nav.TButton")
+            if self.compact_layout:
+                style = "Selected.CompactNav.TButton" if key == name else "CompactNav.TButton"
+            else:
+                style = "Selected.Nav.TButton" if key == name else "Nav.TButton"
+            button.configure(style=style)
+        self.header.transition(self.nav_labels[name][0])
         if name == "activity" and self.engine.started:
             self.refresh_activity()
         elif name == "plugins" and self.engine.started:
@@ -514,19 +714,111 @@ class FileIndexerV1:
         if not isinstance(types, dict):
             types = {}
         total = sum(int(value) for value in types.values())
-        self.card_values["assets"].set(f"{total:,}")
-        self.card_values["images"].set(f"{int(types.get('image', 0)):,}")
-        self.card_values["videos"].set(f"{int(types.get('video', 0)):,}")
-        self.card_values["documents"].set(f"{int(types.get('document', 0)):,}")
+        self._animate_count(self.card_values["assets"], total)
+        self._animate_count(self.card_values["images"], int(types.get("image", 0)))
+        self._animate_count(self.card_values["videos"], int(types.get("video", 0)))
+        self._animate_count(self.card_values["documents"], int(types.get("document", 0)))
+
+    def _animate_count(self, variable: StringVar, target: int, step: int = 0) -> None:
+        if self.ui_settings.reduced_motion or target == 0:
+            variable.set(f"{target:,}")
+            return
+        frames = 14
+        value = round(target * min(1.0, (step + 1) / frames))
+        variable.set(f"{value:,}")
+        if step + 1 < frames:
+            self.root.after(18, self._animate_count, variable, target, step + 1)
 
     # ── search and asset detail ────────────────────────────────────────────
+
+    def focus_search(self) -> None:
+        self.show_page("library")
+        self.search_entry.focus_set()
+
+    def clear_search(self) -> None:
+        self.search_entry.clear()
+        self.type_filter.set("all")
+        self.run_search(reset=True)
+
+    def clear_active_search(self) -> None:
+        if self.current_page == "library":
+            self.clear_search()
+        elif self.current_page == "activity":
+            self.activity_search.clear()
+            self.filter_activity()
+        elif self.current_page == "plugins":
+            self.plugin_search.clear()
+            self.filter_plugins()
+
+    def apply_quick_search(self, query: str) -> None:
+        self.search_text.set(query)
+        self.type_filter.set("all")
+        self.run_search(reset=True)
+
+    def open_tutorial(self) -> None:
+        if any(isinstance(child, TutorialDialog) for child in self.root.winfo_children()):
+            return
+        TutorialDialog(self.root, self.theme, self.scale, self._tutorial_finished)
+
+    def _tutorial_finished(self) -> None:
+        self.ui_settings.tutorial_completed = True
+        save_ui_settings(self.config, self.ui_settings)
+        if not self.config.library.roots and messagebox.askyesno(
+            "Add your first folder?",
+            "The tour is complete. Would you like to choose a media folder now?",
+        ):
+            self.choose_scan_folder()
+
+    def open_help(self) -> None:
+        if any(isinstance(child, HelpCenterDialog) for child in self.root.winfo_children()):
+            return
+        HelpCenterDialog(self.root, self.theme, self.scale, self.open_tutorial)
+
+    def preview_appearance(self) -> None:
+        try:
+            self.ui_settings.text_scale = int(self.text_scale_var.get())
+        except ValueError:
+            self.ui_settings.text_scale = 100
+        self.ui_settings.theme = self.theme_var.get()
+        self.ui_settings.density = self.density_var.get()
+        self.ui_settings.reduced_motion = self.reduced_motion_var.get()
+        self.ui_settings.normalize()
+        self.theme = THEMES[self.ui_settings.theme]
+        self.scale = self.ui_settings.text_scale / 100.0
+        self.root.configure(bg=self.theme.bg)
+        self._configure_style()
+        self.header.apply_theme(
+            self.theme,
+            self.scale,
+            self.ui_settings.reduced_motion,
+        )
+        self.detail.configure(
+            bg=self.theme.panel,
+            fg=self.theme.text,
+            insertbackground=self.theme.text,
+            font=("Cascadia Mono", max(8, round(9 * self.scale))),
+        )
+        self.roots_list.configure(
+            bg=self.theme.panel_alt,
+            fg=self.theme.text,
+            selectbackground=self.theme.selection,
+            selectforeground=self.theme.text,
+            highlightbackground=self.theme.border,
+            font=("Segoe UI", max(9, round(10 * self.scale))),
+        )
+        self._apply_responsive_layout()
+
+    def save_appearance(self) -> None:
+        self.preview_appearance()
+        path = save_ui_settings(self.config, self.ui_settings)
+        self.progress_text.set(f"Appearance saved · {path.name}")
 
     def run_search(self, *, reset: bool) -> None:
         if not self.engine.started:
             return
         if reset:
             self.search_offset = 0
-        raw = self.search_text.get().strip()
+        raw = self.search_entry.value()
         media_type = self.type_filter.get()
         if media_type != "all":
             raw = f"{raw} type:{media_type}".strip()
@@ -594,10 +886,12 @@ class FileIndexerV1:
         if thumbnail is not None:
             try:
                 with Image.open(thumbnail) as image:
-                    image.thumbnail((380, 245), Image.Resampling.LANCZOS)
-                    canvas = Image.new("RGB", (380, 245), PANEL)
-                    fitted = ImageOps.contain(image.convert("RGB"), (380, 245))
-                    canvas.paste(fitted, ((380 - fitted.width) // 2, (245 - fitted.height) // 2))
+                    preview_width = min(340, max(250, self.detail_panel.winfo_width() - 34))
+                    preview_height = min(205, round(preview_width * 0.62))
+                    image.thumbnail((preview_width, preview_height), Image.Resampling.LANCZOS)
+                    canvas = Image.new("RGB", (preview_width, preview_height), self.theme.panel)
+                    fitted = ImageOps.contain(image.convert("RGB"), (preview_width, preview_height))
+                    canvas.paste(fitted, ((preview_width - fitted.width) // 2, (preview_height - fitted.height) // 2))
                     self.thumbnail_image = ImageTk.PhotoImage(canvas)
                 self.preview.configure(image=self.thumbnail_image, text="")
             except Exception:
@@ -701,10 +995,6 @@ class FileIndexerV1:
 
     # ── scanning ───────────────────────────────────────────────────────────
 
-    def _first_run_prompt(self) -> None:
-        if messagebox.askyesno("Welcome to File Indexer V1", "Choose your first media folder now?\n\nOriginal files are always read-only."):
-            self.choose_scan_folder()
-
     def choose_scan_folder(self) -> None:
         selected = filedialog.askdirectory(title="Choose a folder to index", mustexist=True)
         if not selected:
@@ -784,7 +1074,13 @@ class FileIndexerV1:
         self._run_background("activity", work, self._show_activity)
 
     def _show_activity(self, payload: tuple[list[dict[str, Any]], list[dict[str, Any]]]) -> None:
-        scans, errors = payload
+        self.all_scans, self.all_errors = payload
+        self.filter_activity()
+
+    def filter_activity(self) -> None:
+        raw = self.activity_search.value().lower() if hasattr(self, "activity_search") else ""
+        scans = [item for item in getattr(self, "all_scans", []) if not raw or raw in " ".join(str(value) for value in item.values()).lower()]
+        errors = [item for item in getattr(self, "all_errors", []) if not raw or raw in " ".join(str(value) for value in item.values()).lower()]
         self.scans_tree.delete(*self.scans_tree.get_children())
         for item in scans:
             self.scans_tree.insert("", END, values=(item.get("id"), item.get("root_path"), item.get("state"), item.get("files_seen", 0), item.get("files_new", 0), item.get("errors", 0), str(item.get("started_at") or "").replace("T", " ")[:19]))
@@ -803,21 +1099,187 @@ class FileIndexerV1:
         dialog = Toplevel(self.root)
         dialog.title(f"Error #{item.get('id', '')}")
         dialog.geometry("760x460")
-        dialog.configure(bg=BG)
-        text = Text(dialog, bg=PANEL, fg=TEXT, insertbackground=TEXT, wrap="word", font=("Consolas", 9), padx=12, pady=12)
+        dialog.configure(bg=self.theme.bg)
+        text = Text(dialog, bg=self.theme.panel, fg=self.theme.text, insertbackground=self.theme.text, wrap="word", font=("Cascadia Mono", max(8, round(9 * self.scale))), padx=12, pady=12)
         text.pack(fill=BOTH, expand=True, padx=10, pady=10)
         text.insert("1.0", json.dumps(item, indent=2, ensure_ascii=False))
         text.configure(state="disabled")
 
     def refresh_plugins(self) -> None:
-        self._run_background("analyzers", lambda: self.engine.plugins.describe(), self._show_plugins)
+        from ..plugins import PluginManager
+
+        self._run_background("analyzers", lambda: PluginManager(self.engine).catalog(), self._show_plugins)
 
     def _show_plugins(self, plugins: list[dict[str, object]]) -> None:
+        self.all_plugins = plugins
+        self.filter_plugins()
+
+    def filter_plugins(self) -> None:
+        raw = self.plugin_search.value().lower() if hasattr(self, "plugin_search") else ""
         self.plugins_tree.delete(*self.plugins_tree.get_children())
-        for plugin in plugins:
+        for plugin in getattr(self, "all_plugins", []):
+            if raw and raw not in " ".join(str(value) for value in plugin.values()).lower():
+                continue
             task_counts = plugin.get("tasks") or {}
             state = ", ".join(f"{key}: {value}" for key, value in task_counts.items()) if isinstance(task_counts, dict) else ""
-            self.plugins_tree.insert("", END, iid=str(plugin["plugin_id"]), values=(plugin.get("plugin_id"), plugin.get("version"), plugin.get("transport"), "Yes" if plugin.get("enabled") else "No", state or "—", plugin.get("load_error") or plugin.get("description") or ""))
+            self.plugins_tree.insert("", END, iid=str(plugin["plugin_id"]), values=(plugin.get("plugin_id"), plugin.get("version"), plugin.get("kind") or plugin.get("transport"), "Yes" if plugin.get("enabled") else "No", state or "—", plugin.get("load_error") or plugin.get("description") or ""))
+
+    def _selected_plugin_row(self) -> dict[str, object] | None:
+        selected = self.plugins_tree.selection()
+        if not selected:
+            return None
+        plugin_id = selected[0]
+        return next(
+            (row for row in getattr(self, "all_plugins", []) if row.get("plugin_id") == plugin_id),
+            None,
+        )
+
+    def toggle_selected_plugin(self) -> None:
+        row = self._selected_plugin_row()
+        if row is None:
+            messagebox.showinfo("Select an analyzer", "Choose an analyzer in the shop first.")
+            return
+        if self._job_running():
+            messagebox.showinfo("Analyzer is running", "Wait for the current analyzer or scan to finish first.")
+            return
+        plugin_id = str(row["plugin_id"])
+        enable = not bool(row.get("enabled"))
+        grant_network = False
+        plugin = self.engine.plugins.get(plugin_id)
+        if enable and plugin is not None and plugin.info.network and not self.config.plugins.allow_network:
+            grant_network = messagebox.askyesno(
+                "Allow local AI/API access?",
+                f"{plugin_id} declares network access. Allow analyzer network access?\n\n"
+                "This is required for LM Studio and HTTP analyzers; originals remain read-only.",
+            )
+            if not grant_network:
+                return
+
+        def work() -> dict[str, object]:
+            from ..plugins import PluginManager
+
+            return cast(
+                dict[str, object],
+                PluginManager(self.engine).set_enabled(
+                    plugin_id, enable, grant_network=grant_network
+                ),
+            )
+
+        def done(_: dict[str, object]) -> None:
+            self.progress_text.set(f"{plugin_id} {'enabled' if enable else 'disabled'}")
+            self.refresh_plugins()
+
+        self._run_background("plugin setting", work, done)
+
+    def add_plugin_api(self) -> None:
+        if self._job_running():
+            messagebox.showinfo("Job in progress", "Wait for the current scan or analyzer first.")
+            return
+        base_url = simpledialog.askstring(
+            "Add analyzer API",
+            "Analyzer base URL (it must expose /manifest, /health, and /analyze):",
+            initialvalue="http://127.0.0.1:9000",
+            parent=self.root,
+        )
+        if not base_url:
+            return
+        token = simpledialog.askstring(
+            "Optional API token",
+            "Bearer token (leave blank when the local service has no token):",
+            show="*",
+            parent=self.root,
+        )
+        from ..plugins import endpoint_is_local
+
+        allow_external = False
+        if not endpoint_is_local(base_url):
+            allow_external = messagebox.askyesno(
+                "External analyzer endpoint",
+                "This URL is not loopback. Registering it can send media metadata or derivatives "
+                "to another computer. Continue?",
+            )
+            if not allow_external:
+                return
+
+        def work() -> dict[str, object]:
+            from ..plugins import PluginManager
+
+            return cast(
+                dict[str, object],
+                PluginManager(self.engine).register_remote(
+                    base_url,
+                    auth_token=token or None,
+                    allow_external=allow_external,
+                ).as_dict(),
+            )
+
+        def done(result: dict[str, object]) -> None:
+            messagebox.showinfo(
+                "Analyzer added",
+                f"Registered {result['plugin_id']} {result['version']}.\n"
+                "It is ready to run from the analyzer shop.",
+            )
+            self.refresh_plugins()
+
+        self._run_background("API registration", work, done)
+
+    def configure_lm_studio(self) -> None:
+        if self._job_running():
+            messagebox.showinfo("Job in progress", "Wait for the current scan or analyzer first.")
+            return
+        current = self.config.plugin_config("local.lm-studio")
+        base_url = simpledialog.askstring(
+            "LM Studio server",
+            "LM Studio URL (start its server from the Developer tab):",
+            initialvalue=str(current.get("base_url") or "http://127.0.0.1:1234"),
+            parent=self.root,
+        )
+        if not base_url:
+            return
+        model = simpledialog.askstring(
+            "LM Studio model",
+            "Model identifier. Leave blank to automatically use the first model LM Studio exposes:",
+            initialvalue=str(current.get("model") or ""),
+            parent=self.root,
+        )
+        token = simpledialog.askstring(
+            "LM Studio API token",
+            "Optional token. Leave blank to keep the existing token or use an unauthenticated local server:",
+            show="*",
+            parent=self.root,
+        )
+        send_image = messagebox.askyesno(
+            "Use a vision model?",
+            "Send a 512-pixel preview to LM Studio for images?\n\n"
+            "Choose No for text-only models. Originals are never sent or modified.",
+        )
+        values = dict(current)
+        values.update(
+            {
+                "base_url": base_url,
+                "model": (model or "").strip(),
+                "send_image": send_image,
+                "structured_output": True,
+            }
+        )
+        if token:
+            values["api_token"] = token
+
+        def work() -> None:
+            from ..plugins import PluginManager
+
+            manager = PluginManager(self.engine)
+            manager.configure("local.lm-studio", values)
+            manager.set_enabled("local.lm-studio", True, grant_network=True)
+
+        def done(_: object) -> None:
+            messagebox.showinfo(
+                "LM Studio connected",
+                "LM Studio enrichment is enabled. Select it and choose Run selected after indexing files.",
+            )
+            self.refresh_plugins()
+
+        self._run_background("LM Studio setup", work, done)
 
     def run_selected_plugin(self) -> None:
         selected = self.plugins_tree.selection()
@@ -845,8 +1307,6 @@ class FileIndexerV1:
             self.refresh_all()
             self.refresh_plugins()
 
-        # PluginRunner currently owns the engine-wide token. V1 still keeps a
-        # GUI token for consistent state; engine.cancel handles this job.
         self._run_background(
             "analysis",
             lambda: self.engine.backfill([plugin_id], progress=progress, cancel=token),
@@ -923,11 +1383,11 @@ class FileIndexerV1:
                 return
             self.close_pending = True
             self.cancel_job()
-            self.status_text.set("●  Closing safely…")
+            self.header.set_status("Closing safely…")
             return
         if self._work_running():
             self.close_pending = True
-            self.status_text.set("●  Finishing current read…")
+            self.header.set_status("Finishing current read…")
             return
         self._finish_close()
 

@@ -176,6 +176,17 @@ class MediaEngine:
             self._registry.discover()
         return self._registry
 
+    def reload_plugins(self) -> "PluginRegistry":
+        """Re-discover plugins after an operator changes registration config."""
+        from .plugins import PluginRegistry
+
+        self.start()
+        with self._lock:
+            registry = PluginRegistry(self.config, self.repos)
+            registry.discover()
+            self._registry = registry
+            return registry
+
     def backfill(
         self,
         plugin_ids: Sequence[str] | None = None,
@@ -297,6 +308,52 @@ class MediaEngine:
         """
         self.start()
         return self.repos.identities.purge_biometrics()
+
+    def import_face_reference_pack(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Import an explicitly licensed, precomputed local reference pack."""
+        self.start()
+        return self.repos.reference_faces.import_pack(payload)
+
+    def face_reference_packs(self) -> list[dict[str, Any]]:
+        self.start()
+        return self.repos.reference_faces.list_packs()
+
+    def delete_face_reference_pack(self, pack_id: int) -> bool:
+        self.start()
+        return self.repos.reference_faces.delete_pack(pack_id)
+
+    def match_face_reference_pack(
+        self,
+        pack_id: int,
+        *,
+        threshold: float = 0.72,
+        min_margin: float = 0.05,
+        limit: int = 100_000,
+    ) -> dict[str, Any]:
+        """Match face templates and return counts; assignments remain pending."""
+        from dataclasses import asdict
+
+        from .identity import FaceReferenceMatcher
+
+        self.start()
+        return asdict(
+            FaceReferenceMatcher(self.repos).match(
+                pack_id, threshold=threshold, min_margin=min_margin, limit=limit
+            )
+        )
+
+    def face_match_suggestions(
+        self, *, status: str = "pending", limit: int = 200
+    ) -> list[dict[str, Any]]:
+        self.start()
+        return self.repos.reference_faces.list_suggestions(status=status, limit=limit)
+
+    def review_face_match_suggestion(
+        self, suggestion_id: int, *, accept: bool
+    ) -> dict[str, Any]:
+        """Apply one explicit human accept/reject decision."""
+        self.start()
+        return self.repos.reference_faces.review(suggestion_id, accept=accept)
 
     def record_note(self, key: str, value: str) -> None:
         """Store a small piece of engine state. Used by the CLI and the API."""

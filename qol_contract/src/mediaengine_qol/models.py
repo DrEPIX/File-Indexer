@@ -104,10 +104,18 @@ class FilterClause:
     def from_mapping(cls, data: Mapping[str, Any]) -> "FilterClause":
         """Parse a client mapping without silently accepting missing keys."""
 
+        if not isinstance(data, Mapping):
+            raise QueryError("filter clause must be an object")
         try:
+            key = data["key"]
+            operator = data["operator"]
+            if not isinstance(key, str) or not key.strip():
+                raise QueryError("filter clause key must be a non-empty string")
+            if not isinstance(operator, str) or not operator.strip():
+                raise QueryError("filter clause operator must be a non-empty string")
             return cls(
-                key=str(data["key"]),
-                operator=str(data["operator"]),
+                key=key,
+                operator=operator,
                 value=data.get("value"),
             )
         except KeyError as exc:
@@ -123,9 +131,21 @@ class QueryGroup:
     groups: tuple["QueryGroup", ...] = ()
 
     @classmethod
-    def from_mapping(cls, data: Mapping[str, Any]) -> "QueryGroup":
+    def from_mapping(
+        cls,
+        data: Mapping[str, Any],
+        *,
+        _depth: int = 0,
+    ) -> "QueryGroup":
         """Parse a recursive mapping supplied by HTTP or a GUI."""
 
+        if not isinstance(data, Mapping):
+            raise QueryError("query group must be an object")
+        # Enforce an absolute parser safety ceiling before recursion. The
+        # registry's usually-smaller max_boolean_depth is enforced by the
+        # planner after parsing.
+        if _depth > 64:
+            raise QueryError("query nesting exceeds the parser safety limit of 64 levels")
         try:
             operator = GroupOperator(str(data.get("operator", "all")))
         except ValueError as exc:
@@ -136,10 +156,23 @@ class QueryGroup:
             raise QueryError("clauses must be an array")
         if not isinstance(groups_raw, Sequence) or isinstance(groups_raw, (str, bytes)):
             raise QueryError("groups must be an array")
+        clauses: list[FilterClause] = []
+        for index, item in enumerate(clauses_raw):
+            if not isinstance(item, Mapping):
+                raise QueryError(f"clauses[{index}] must be an object")
+            clauses.append(FilterClause.from_mapping(item))
+        groups: list[QueryGroup] = []
+        for index, item in enumerate(groups_raw):
+            if not isinstance(item, Mapping):
+                raise QueryError(f"groups[{index}] must be an object")
+            try:
+                groups.append(cls.from_mapping(item, _depth=_depth + 1))
+            except QueryError as exc:
+                raise QueryError(f"groups[{index}]: {exc}") from exc
         return cls(
             operator=operator,
-            clauses=tuple(FilterClause.from_mapping(item) for item in clauses_raw),
-            groups=tuple(cls.from_mapping(item) for item in groups_raw),
+            clauses=tuple(clauses),
+            groups=tuple(groups),
         )
 
 
@@ -160,21 +193,47 @@ class SearchRequest:
     def from_mapping(cls, data: Mapping[str, Any]) -> "SearchRequest":
         """Parse a stable JSON-shaped request."""
 
+        if not isinstance(data, Mapping):
+            raise QueryError("search request must be an object")
         where_raw = data.get("where", {})
         if not isinstance(where_raw, Mapping):
             raise QueryError("where must be an object")
         namespaces = data.get("facet_namespaces", [])
         if not isinstance(namespaces, Sequence) or isinstance(namespaces, (str, bytes)):
             raise QueryError("facet_namespaces must be an array")
+        if any(not isinstance(value, str) or not value.strip() for value in namespaces):
+            raise QueryError("facet_namespaces must contain non-empty strings")
+
+        text = data.get("text")
+        sort = data.get("sort")
+        direction = data.get("direction")
+        cursor = data.get("cursor")
+        for field_name, value in (
+            ("text", text),
+            ("sort", sort),
+            ("direction", direction),
+            ("cursor", cursor),
+        ):
+            if value is not None and not isinstance(value, str):
+                raise QueryError(f"{field_name} must be a string or null")
+
+        raw_page_size = data.get("page_size")
+        if raw_page_size is not None and (
+            isinstance(raw_page_size, bool) or not isinstance(raw_page_size, int)
+        ):
+            raise QueryError("page_size must be an integer or null")
+        include_facets = data.get("include_facets", True)
+        if not isinstance(include_facets, bool):
+            raise QueryError("include_facets must be a boolean")
         return cls(
-            text=str(data["text"]) if data.get("text") is not None else None,
+            text=text,
             where=QueryGroup.from_mapping(where_raw),
-            sort=str(data["sort"]) if data.get("sort") is not None else None,
-            direction=str(data["direction"]) if data.get("direction") is not None else None,
-            page_size=int(data["page_size"]) if data.get("page_size") is not None else None,
-            cursor=str(data["cursor"]) if data.get("cursor") is not None else None,
-            include_facets=bool(data.get("include_facets", True)),
-            facet_namespaces=tuple(str(value) for value in namespaces),
+            sort=sort,
+            direction=direction,
+            page_size=raw_page_size,
+            cursor=cursor,
+            include_facets=include_facets,
+            facet_namespaces=tuple(namespaces),
         )
 
 
