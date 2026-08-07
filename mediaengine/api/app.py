@@ -36,6 +36,7 @@ def _sheet_path(explicit: str | Path | None = None) -> Path:
         Path(explicit) if explicit else None,
         Path(os.environ["MEDIAENGINE_QOL_SHEET"]) if os.environ.get("MEDIAENGINE_QOL_SHEET") else None,
         Path.cwd() / "qol_contract" / "change_sheet.toml",
+        Path(sys.prefix) / "share" / "mediaengine" / "change_sheet.toml",
         Path("/config/change_sheet.toml"),
     ]
     for candidate in candidates:

@@ -19,3 +19,6 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 mediaengine_qol = ["py.typed"]
+
+[tool.setuptools.data-files]
+"share/mediaengine" = ["change_sheet.toml"]

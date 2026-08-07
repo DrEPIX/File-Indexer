@@ -55,6 +55,23 @@ def test_health_auth_surface_and_asset(tmp_path: Path) -> None:
             plugins = client.get("/api/plugins", headers=headers)
             assert plugins.status_code == 200, plugins.text
             assert isinstance(plugins.json(), list)
+            assert any(item["plugin_id"] == "core.exif-entities" for item in plugins.json())
+
+            backfill = client.post(
+                "/api/plugins/core.exif-entities/backfill",
+                headers=headers,
+                json={"limit": 10},
+            )
+            assert backfill.status_code == 202, backfill.text
+            job_id = backfill.json()["id"]
+            deadline = time.monotonic() + 5
+            while True:
+                job = client.get(f"/api/jobs/{job_id}", headers=headers).json()
+                if job["state"] in {"done", "failed", "cancelled"}:
+                    break
+                assert time.monotonic() < deadline, job
+                time.sleep(0.02)
+            assert job["state"] == "done", job
     finally:
         engine.close()
 

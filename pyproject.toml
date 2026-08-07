@@ -69,6 +69,9 @@ include = ["mediaengine*", "mediaengine_qol*"]
 mediaengine = ["db/migrations/*.sql", "py.typed"]
 mediaengine_qol = ["py.typed"]
 
+[tool.setuptools.data-files]
+"share/mediaengine" = ["qol_contract/change_sheet.toml"]
+
 [tool.mypy]
 python_version = "3.11"
 strict = true
