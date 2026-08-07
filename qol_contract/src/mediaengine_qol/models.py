@@ -149,9 +149,9 @@ class SearchRequest:
 
     text: str | None = None
     where: QueryGroup = field(default_factory=QueryGroup)
-    sort: str = "captured"
+    sort: str | None = None
     direction: str | None = None
-    page_size: int = 100
+    page_size: int | None = None
     cursor: str | None = None
     include_facets: bool = True
     facet_namespaces: tuple[str, ...] = ()
@@ -169,9 +169,9 @@ class SearchRequest:
         return cls(
             text=str(data["text"]) if data.get("text") is not None else None,
             where=QueryGroup.from_mapping(where_raw),
-            sort=str(data.get("sort", "captured")),
+            sort=str(data["sort"]) if data.get("sort") is not None else None,
             direction=str(data["direction"]) if data.get("direction") is not None else None,
-            page_size=int(data.get("page_size", 100)),
+            page_size=int(data["page_size"]) if data.get("page_size") is not None else None,
             cursor=str(data["cursor"]) if data.get("cursor") is not None else None,
             include_facets=bool(data.get("include_facets", True)),
             facet_namespaces=tuple(str(value) for value in namespaces),
@@ -211,4 +211,3 @@ class SearchPlan:
     include_facets: bool
     facet_namespaces: tuple[str, ...]
     required_capabilities: frozenset[str]
-

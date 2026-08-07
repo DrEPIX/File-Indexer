@@ -55,8 +55,17 @@ class SurfaceRegistry:
             raise SheetError(f"default_sort references unknown sort {default_sort!r}")
         default_page_size = search.get("default_page_size", 100) if isinstance(search, Mapping) else 100
         max_page_size = search.get("max_page_size", 500) if isinstance(search, Mapping) else 500
-        if not 1 <= int(default_page_size) <= int(max_page_size):
+        max_boolean_depth = search.get("max_boolean_depth", 12) if isinstance(search, Mapping) else 12
+        try:
+            default_page_size = int(default_page_size)
+            max_page_size = int(max_page_size)
+            max_boolean_depth = int(max_boolean_depth)
+        except (TypeError, ValueError) as exc:
+            raise SheetError("search size and depth settings must be integers") from exc
+        if not 1 <= default_page_size <= max_page_size:
             raise SheetError("default_page_size must be between 1 and max_page_size")
+        if not 0 <= max_boolean_depth <= 64:
+            raise SheetError("max_boolean_depth must be between 0 and 64")
 
     def filter(self, key_or_alias: str) -> FilterDefinition:
         """Resolve a canonical filter key or a compatibility alias."""

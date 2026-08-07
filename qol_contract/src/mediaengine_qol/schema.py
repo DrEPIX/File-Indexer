@@ -12,6 +12,12 @@ def search_request_schema(registry: SurfaceRegistry) -> dict[str, Any]:
 
     enabled_filters = [key for key, value in registry.filters.items() if value.enabled]
     enabled_sorts = [key for key, value in registry.sorts.items() if value.enabled]
+    search = registry.settings.get("search", {})
+    if not isinstance(search, dict):
+        search = {}
+    default_sort = str(search.get("default_sort", "captured"))
+    default_page_size = int(search.get("default_page_size", 100))
+    max_page_size = int(search.get("max_page_size", 500))
     return {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "$id": "mediaengine://schemas/search-request-v1.json",
@@ -21,9 +27,14 @@ def search_request_schema(registry: SurfaceRegistry) -> dict[str, Any]:
         "properties": {
             "text": {"type": ["string", "null"]},
             "where": {"$ref": "#/$defs/group"},
-            "sort": {"enum": enabled_sorts},
+            "sort": {"enum": enabled_sorts, "default": default_sort},
             "direction": {"enum": ["asc", "desc", None]},
-            "page_size": {"type": "integer", "minimum": 1},
+            "page_size": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": max_page_size,
+                "default": default_page_size,
+            },
             "cursor": {"type": ["string", "null"]},
             "include_facets": {"type": "boolean"},
             "facet_namespaces": {"type": "array", "items": {"type": "string"}},
@@ -50,4 +61,3 @@ def search_request_schema(registry: SurfaceRegistry) -> dict[str, Any]:
             },
         },
     }
-

@@ -108,8 +108,38 @@ class ContractTests(unittest.TestCase):
         keys = schema["$defs"]["clause"]["properties"]["key"]["enum"]
         self.assertIn("annotation.label", keys)
         self.assertNotIn("type", keys)  # aliases are accepted, but not advertised as canonical.
+        self.assertEqual(schema["properties"]["sort"]["default"], "captured")
+        self.assertEqual(schema["properties"]["page_size"]["maximum"], 500)
+
+    def test_sheet_controls_defaults_and_boolean_depth(self) -> None:
+        registry = SurfaceRegistry(
+            filters=self.registry.filters.values(),
+            sorts=self.registry.sorts.values(),
+            operations=self.registry.operations.values(),
+            settings={
+                "search": {
+                    "default_sort": "filename",
+                    "default_page_size": 7,
+                    "max_page_size": 20,
+                    "max_boolean_depth": 1,
+                }
+            },
+        )
+        planner = QueryPlanner(registry)
+        plan = planner.plan(SearchRequest.from_mapping({}))
+        self.assertEqual(plan.sort_field, "files.filename")
+        self.assertEqual(plan.page_size, 7)
+
+        too_deep = SearchRequest.from_mapping(
+            {
+                "where": {
+                    "groups": [{"groups": [{"clauses": []}]}],
+                }
+            }
+        )
+        with self.assertRaisesRegex(QueryError, "exceeds 1 levels"):
+            planner.plan(too_deep)
 
 
 if __name__ == "__main__":
     unittest.main()
-

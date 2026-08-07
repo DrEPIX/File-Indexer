@@ -37,19 +37,26 @@ class QueryPlanner:
         if not isinstance(search_settings, Mapping):
             search_settings = {}
         max_page_size = int(search_settings.get("max_page_size", 500))
-        if not 1 <= request.page_size <= max_page_size:
+        page_size = request.page_size
+        if page_size is None:
+            page_size = int(search_settings.get("default_page_size", 100))
+        if not 1 <= page_size <= max_page_size:
             raise QueryError(f"page_size must be between 1 and {max_page_size}")
+        sort_key = request.sort or str(search_settings.get("default_sort", "captured"))
         try:
-            sort = self.registry.sorts[request.sort]
+            sort = self.registry.sorts[sort_key]
         except KeyError as exc:
-            raise QueryError(f"unknown sort: {request.sort!r}") from exc
+            raise QueryError(f"unknown sort: {sort_key!r}") from exc
         if not sort.enabled:
             raise QueryError(f"sort is disabled: {request.sort!r}")
         direction = request.direction or sort.default_direction
         if direction not in sort.directions:
             raise QueryError(f"sort {sort.key!r} does not allow direction {direction!r}")
         capabilities: set[str] = set()
-        where = self._plan_group(request.where, capabilities, depth=0)
+        max_depth = int(search_settings.get("max_boolean_depth", 12))
+        where = self._plan_group(
+            request.where, capabilities, depth=0, max_depth=max_depth
+        )
         if request.text:
             capabilities.add("fts")
         if request.include_facets:
@@ -59,18 +66,27 @@ class QueryPlanner:
             where=where,
             sort_field=sort.field,
             direction=direction,
-            page_size=request.page_size,
+            page_size=page_size,
             cursor=request.cursor,
             include_facets=request.include_facets,
             facet_namespaces=request.facet_namespaces,
             required_capabilities=frozenset(capabilities),
         )
 
-    def _plan_group(self, group: QueryGroup, capabilities: set[str], depth: int) -> PlannedGroup:
-        if depth > 12:
-            raise QueryError("query nesting exceeds 12 levels")
+    def _plan_group(
+        self,
+        group: QueryGroup,
+        capabilities: set[str],
+        depth: int,
+        max_depth: int,
+    ) -> PlannedGroup:
+        if depth > max_depth:
+            raise QueryError(f"query nesting exceeds {max_depth} levels")
         clauses = tuple(self._plan_clause(clause, capabilities) for clause in group.clauses)
-        groups = tuple(self._plan_group(child, capabilities, depth + 1) for child in group.groups)
+        groups = tuple(
+            self._plan_group(child, capabilities, depth + 1, max_depth)
+            for child in group.groups
+        )
         return PlannedGroup(operator=group.operator, clauses=clauses, groups=groups)
 
     def _plan_clause(self, clause: FilterClause, capabilities: set[str]) -> PlannedClause:
@@ -145,4 +161,3 @@ class QueryPlanner:
             return str(value)
         except (TypeError, ValueError) as exc:
             raise QueryError(f"invalid value for {definition.key!r}: {value!r} ({exc})") from exc
-

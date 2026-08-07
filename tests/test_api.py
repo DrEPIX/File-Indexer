@@ -28,6 +28,12 @@ def _engine(tmp_path: Path) -> MediaEngine:
         captured_at="2024-01-02T03:04:05.000Z",
     )
     engine.repos.assets.upsert_file(asset_id=asset_id, path=str(tmp_path / "Beach Photo.jpg"))
+    engine.db.writer.run(
+        lambda conn: conn.execute(
+            "UPDATE files SET mtime_ns=? WHERE asset_id=?",
+            (1_704_164_645_000_000_000, asset_id),
+        )
+    )
     engine.repos.assets.set_technical_metadata(
         asset_id, {"width": 1920, "height": 1080, "camera_make": "ExampleCam"}
     )
@@ -139,6 +145,37 @@ def test_search_uses_qol_filters_and_core_fts_sanitizer(tmp_path: Path) -> None:
             )
             assert tagged.status_code == 200, tagged.text
             assert tagged.json()["total"] == 1
+
+            excluded = client.post(
+                "/api/search",
+                headers=headers,
+                json={
+                    "where": {
+                        "operator": "none",
+                        "clauses": [
+                            {"key": "annotation.label", "operator": "eq", "value": "bright"}
+                        ],
+                    },
+                    "include_facets": False,
+                },
+            )
+            assert excluded.status_code == 200, excluded.text
+            assert excluded.json()["total"] == 0
+
+            modified = client.post(
+                "/api/search",
+                headers=headers,
+                json={
+                    "where": {
+                        "clauses": [
+                            {"key": "date.modified", "operator": "after", "value": "2024-01-01T00:00:00Z"}
+                        ]
+                    },
+                    "include_facets": False,
+                },
+            )
+            assert modified.status_code == 200, modified.text
+            assert modified.json()["total"] == 1
 
             invalid = client.post(
                 "/api/annotations",

@@ -12,6 +12,7 @@ import base64
 import binascii
 import json
 from collections.abc import Sequence
+from datetime import datetime, timezone
 from typing import Any, cast
 
 from .errors import QueryError
@@ -163,17 +164,21 @@ class MediaEngineBackend:
         parts = [self._clause(clause, params) for clause in group.clauses]
         parts.extend(value for child in group.groups if (value := self._group(child, params)))
         if not parts:
-            return "1=1" if group.operator is GroupOperator.ALL else "1=0"
+            return "1=0" if group.operator is GroupOperator.ANY else "1=1"
         joiner = " AND " if group.operator is GroupOperator.ALL else " OR "
-        return "(" + joiner.join(parts) + ")"
+        expression = "(" + joiner.join(parts) + ")"
+        return f"NOT {expression}" if group.operator is GroupOperator.NONE else expression
 
     def _clause(self, clause: PlannedClause, params: list[Any]) -> str:
         field = clause.backend_field
         if field in _DIRECT_FIELDS:
             return self._value_predicate(_DIRECT_FIELDS[field], clause.operator, clause.value, params)
         if field in _FILE_FIELDS:
+            value = clause.value
+            if field == "files.mtime_ns":
+                value = self._mtime_value(value)
             return self._related_predicate(
-                "files fx", "fx.asset_id=a.id", _FILE_FIELDS[field], clause.operator, clause.value, params
+                "files fx", "fx.asset_id=a.id", _FILE_FIELDS[field], clause.operator, value, params
             )
         if field in _ANNOTATION_FIELDS:
             return self._related_predicate(
@@ -301,6 +306,19 @@ class MediaEngineBackend:
         except (KeyError, TypeError, ValueError) as exc:
             raise QueryError(f"invalid geo filter: {value!r}") from exc
         raise QueryError(f"geo operator is not implemented: {operator!r}")
+
+    @staticmethod
+    def _mtime_value(value: Any) -> Any:
+        """Convert sheet-facing ISO datetimes to filesystem epoch nanoseconds."""
+
+        if isinstance(value, list):
+            return [MediaEngineBackend._mtime_value(item) for item in value]
+        if not isinstance(value, str):
+            return value
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return int(parsed.timestamp() * 1_000_000_000)
 
     @staticmethod
     def _sort_expression(field: str, has_text: bool) -> str:
