@@ -25,6 +25,34 @@ Per-plugin settings are passed through `plugins.per_plugin.acme.vision`:
 - `max_objects` (default `100`)
 - `max_keyframes` (default `3`)
 
+## Caffe detection models
+
+Set `VISION_OBJECT_BACKEND` to `caffe` or `both`. For one legacy model, provide
+`VISION_CAFFE_PROTOTXT`, `VISION_CAFFE_MODEL`, and `VISION_CAFFE_LABELS`. For
+multiple models, set `VISION_CAFFE_MODELS_CONFIG` to a JSON file based on
+`caffe-models.example.json`.
+
+Compose bind-mounts `VISION_CAFFE_MODELS_PATH` read-only at `/models/caffe` and
+defaults the config path to `/models/caffe/models.json`. Put your existing model
+directories there; do not copy weights into the repository or image.
+
+Each model entry owns its ID, files, labels, input size, scale, mean, channel
+swap, confidence threshold, and result cap. Relative file paths resolve from
+the JSON file's directory. Labels may be a text-file path or an inline array.
+Detections from Caffe models use child namespaces such as
+`vision.object.mobilenet-ssd-custom` and include both `backend` and `model_id`
+in the annotation value. A parent query such as `vision.object:car` matches all
+detectors, while a child namespace selects one model. Separate namespaces also
+prevent two models that return the same label and box from overwriting each
+other during idempotent commits.
+
+The initial parser supports the widely used Caffe SSD seven-column output
+layout (`ssd7`): image id, class id, confidence, and normalized box corners.
+Unsupported output layouts fail with a model-specific diagnostic. Invalid
+entries and model-load failures are isolated; valid sibling models continue to
+run. Weights and prototxt files are operator-owned and never downloaded or
+modified by MediaEngine.
+
 The matching `VISION_*` entries in `docker/.env` set installation defaults;
 per-plugin request config wins when both are present. These are intentionally
 plain variables so changing model sensitivity does not require Python edits.

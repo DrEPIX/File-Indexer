@@ -57,7 +57,6 @@ class MediaEngine:
             )
         self._db: Database | None = None
         self._repos: Repositories | None = None
-        self._registry: Any | None = None
         self._lock = threading.Lock()
         self._started = False
         self._cancel = CancelToken()
@@ -98,7 +97,6 @@ class MediaEngine:
                 self._db.close()
             self._db = None
             self._repos = None
-            self._registry = None
             self._registry = None
             self._started = False
 
@@ -184,12 +182,17 @@ class MediaEngine:
         *,
         limit: int | None = None,
         progress: ProgressCallback | None = None,
+        cancel: CancelToken | None = None,
     ) -> "BackfillResult":
         """Run analyzers over the library via the task queue. Blocks."""
         from .plugins import PluginRunner
 
         runner = PluginRunner(
-            self.config, self.repos, self.plugins, progress=progress, cancel=self._cancel
+            self.config,
+            self.repos,
+            self.plugins,
+            progress=progress,
+            cancel=self._cancel if cancel is None else cancel,
         )
         return runner.run(list(plugin_ids) if plugin_ids else None, limit=limit)
 

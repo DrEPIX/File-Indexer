@@ -1,8 +1,9 @@
 # MediaEngine Containers
 
 The API image deploys the engine's HTTP service; it does not replace the plain
-pip-installable core used by the PyQt GUI. The CLIP service is an isolated HTTP
-analyzer with its own dependency stack and model cache.
+pip-installable core used by the native Tk desktop GUI. CLIP category/embedding, object/face,
+and safety models run as isolated local HTTP analyzers with independent model
+caches and dependency stacks.
 
 ## Prepare
 
@@ -32,6 +33,10 @@ uncached CLIP start downloads weights. After the cache is populated, operators
 who require an offline installation can set
 `MEDIAENGINE__PLUGINS__ALLOW_NETWORK=false` and deny container egress.
 
+Use `--profile ai` to start the complete local vision stack (CLIP categories,
+objects/faces, and NSFW safety ratings), or `--profile safety` for only the
+safety classifier. None of these services uses a generative LLM.
+
 ## NVIDIA GPU stack
 
 The GPU overlay uses a CUDA 12 runtime, official PyTorch cu121 wheels, and one
@@ -45,12 +50,12 @@ docker compose --env-file docker/.env -f docker/compose.yaml -f docker/compose.g
 ```
 
 Use `--profile vision` for face learning/recognition vectors and COCO object
-detection, or enable both profiles together. Face embeddings are stored through
+detection, or enable all services together. Face embeddings are stored through
 the normal producer-aware pipeline and feed identity clustering; the model never
 overwrites user-confirmed identity data.
 
 ```powershell
-docker compose --env-file docker/.env -f docker/compose.yaml -f docker/compose.gpu.yaml --profile clip --profile vision up --build
+docker compose --env-file docker/.env -f docker/compose.yaml -f docker/compose.gpu.yaml --profile ai up --build
 ```
 
 This requires Docker Desktop with NVIDIA container support. The development
@@ -60,17 +65,27 @@ authoring, so static Compose validation is available before live build testing.
 ## Mount and state boundaries
 
 - `/library` is a read-only bind mount. Originals cannot be modified by either
-  container.
+  container. The API and model containers see it at the same absolute path, so
+  an HTTP analyzer can open path-mode originals without path rewriting.
 - `/data/db` and `/data/derivatives` are separate named volumes.
-- `/data/derivatives` is mounted read-only at the identical absolute path in the
-  CLIP container, satisfying the `transfer = "paths"` contract.
-- `/models` is the persistent, replaceable CLIP model cache.
+- `/data/derivatives` is mounted read-only at the identical absolute path in
+  both model containers, satisfying the `transfer = "both"` contract.
+- `/models` is a persistent, replaceable per-service model cache.
 - `/plugins` is a read-only mount of `plugins-available/` for discovery.
 
+`CLIP_AUTH_TOKEN`, `VISION_AUTH_TOKEN`, and `SAFETY_AUTH_TOKEN` are passed both
+to their respective services and to the engine's remote endpoint overrides.
+No manifest edit is needed. Blank values keep the internal Compose services
+unauthenticated.
+
+Safety output is advisory. The analyzer records `safe`, `review`, or `flagged`
+under `safety.nsfw`; it never deletes or moves originals. Search with
+`nsfw:safe`, `nsfw:only`, or the generic `safety.nsfw:review` filter.
+
 `plugin-base` is a build-only Compose service scaled to zero replicas. It lets
-the CLIP Dockerfile literally inherit the shared CPU or CUDA base while keeping
+the analyzer Dockerfiles inherit the shared CPU or CUDA base while keeping
 `docker compose up` from starting a useless helper container.
 
-API liveness is `GET /api/health`; CLIP liveness is `GET /health`. The API
+API liveness is `GET /api/health`; each analyzer uses `GET /health`. The API
 entrypoint waits for a writable DB directory, runs idempotent migrations, then
 execs the server so signals reach PID 1 through `tini`.

@@ -1,9 +1,9 @@
 [plugin]
 id = "acme.clip"
-version = "1.0.0"
+version = "1.1.0"
 transport = "http"
 accepts = ["image", "video"]
-emits = ["clip", "clip.tag"]
+emits = ["clip", "visual.category"]
 depends_on = []
 model_id = "openai/clip-vit-base-patch32"
 description = "CLIP image, keyframe, and optional zero-shot embeddings over HTTP"
@@ -37,7 +37,8 @@ display_name = "Visual similarity"
 value_type = "text"
 facetable = false
 
-[plugin.namespaces."clip.tag"]
-display_name = "CLIP zero-shot labels"
+[plugin.namespaces."visual.category"]
+display_name = "Visual categories"
+description = "Local zero-shot tags for format, subject, activity and scene."
 value_type = "categorical"
 facetable = true

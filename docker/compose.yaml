@@ -2,7 +2,7 @@ name: mediaengine
 
 services:
   plugin-base:
-    profiles: ["clip", "vision"]
+    profiles: ["clip", "vision", "safety", "ai"]
     image: mediaengine-plugin-base:cpu
     build:
       context: ..
@@ -32,6 +32,9 @@ services:
       MEDIAENGINE__PLUGINS__ENABLE_ALL: "true"
       MEDIAENGINE__PLUGINS__ALLOW_NETWORK: "true"
       MEDIAENGINE__PLUGINS__ALLOW_GPU: "false"
+      # Keep service auth tokens out of checked-in manifests while giving the
+      # engine the same credentials as each model service.
+      MEDIAENGINE__PLUGINS__REMOTE: '{"acme.clip":{"base_url":"http://clip:9100","auth_token":"${CLIP_AUTH_TOKEN:-}"},"acme.vision":{"base_url":"http://vision:9200","auth_token":"${VISION_AUTH_TOKEN:-}","timeout_s":180},"local.safety":{"base_url":"http://safety:9300","auth_token":"${SAFETY_AUTH_TOKEN:-}","timeout_s":180}}'
       MEDIAENGINE__API__HOST: 0.0.0.0
       MEDIAENGINE__API__PORT: "8420"
       MEDIAENGINE__API__AUTH_TOKEN: ${MEDIAENGINE_AUTH_TOKEN:?Set MEDIAENGINE_AUTH_TOKEN to at least 16 random characters}
@@ -65,7 +68,7 @@ services:
       retries: 5
 
   clip:
-    profiles: ["clip"]
+    profiles: ["clip", "ai"]
     build:
       context: ..
       dockerfile: plugins-available/clip-http/Dockerfile
@@ -81,6 +84,10 @@ services:
       HF_HOME: /models/huggingface
       TORCH_HOME: /models/torch
     volumes:
+      - type: bind
+        source: ${MEDIAENGINE_LIBRARY_PATH:-../library}
+        target: /library
+        read_only: true
       - type: volume
         source: clip-models
         target: /models
@@ -107,7 +114,7 @@ services:
       retries: 10
 
   vision:
-    profiles: ["vision"]
+    profiles: ["vision", "ai"]
     build:
       context: ..
       dockerfile: plugins-available/vision-http/Dockerfile
@@ -125,12 +132,22 @@ services:
       VISION_MAX_FACES: ${VISION_MAX_FACES:-32}
       VISION_MAX_OBJECTS: ${VISION_MAX_OBJECTS:-100}
       VISION_MAX_KEYFRAMES: ${VISION_MAX_KEYFRAMES:-3}
+      VISION_OBJECT_BACKEND: ${VISION_OBJECT_BACKEND:-torchvision}
+      VISION_CAFFE_MODELS_CONFIG: ${VISION_CAFFE_MODELS_CONFIG:-/models/caffe/models.json}
       HF_HOME: /models/huggingface
       TORCH_HOME: /models/torch
     volumes:
+      - type: bind
+        source: ${MEDIAENGINE_LIBRARY_PATH:-../library}
+        target: /library
+        read_only: true
       - type: volume
         source: vision-models
         target: /models
+      - type: bind
+        source: ${VISION_CAFFE_MODELS_PATH:-../models/caffe}
+        target: /models/caffe
+        read_only: true
       - type: volume
         source: mediaengine-derivatives
         target: /data/derivatives
@@ -153,8 +170,59 @@ services:
       start_period: 180s
       retries: 12
 
+  safety:
+    profiles: ["safety", "ai"]
+    build:
+      context: ..
+      dockerfile: plugins-available/safety-http/Dockerfile
+      additional_contexts:
+        plugin_base: service:plugin-base
+      args:
+        TORCH_INDEX_URL: https://download.pytorch.org/whl/cpu
+    restart: unless-stopped
+    init: true
+    environment:
+      SAFETY_DEVICE: cpu
+      SAFETY_AUTH_TOKEN: ${SAFETY_AUTH_TOKEN:-}
+      SAFETY_MODEL_ID: ${SAFETY_MODEL_ID:-Falconsai/nsfw_image_detection}
+      SAFETY_REVIEW_THRESHOLD: ${SAFETY_REVIEW_THRESHOLD:-0.45}
+      SAFETY_FLAG_THRESHOLD: ${SAFETY_FLAG_THRESHOLD:-0.75}
+      SAFETY_MAX_KEYFRAMES: ${SAFETY_MAX_KEYFRAMES:-12}
+      HF_HOME: /models/huggingface
+      TORCH_HOME: /models/torch
+    volumes:
+      - type: bind
+        source: ${MEDIAENGINE_LIBRARY_PATH:-../library}
+        target: /library
+        read_only: true
+      - type: volume
+        source: safety-models
+        target: /models
+      - type: volume
+        source: mediaengine-derivatives
+        target: /data/derivatives
+        read_only: true
+    expose: ["9300"]
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: ["ALL"]
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          if [ -n "$$SAFETY_AUTH_TOKEN" ]; then
+            curl --fail --silent --header "Authorization: Bearer $$SAFETY_AUTH_TOKEN" http://127.0.0.1:9300/health;
+          else
+            curl --fail --silent http://127.0.0.1:9300/health;
+          fi
+      interval: 20s
+      timeout: 5s
+      start_period: 180s
+      retries: 12
+
 volumes:
   mediaengine-db:
   mediaengine-derivatives:
   clip-models:
   vision-models:
+  safety-models:

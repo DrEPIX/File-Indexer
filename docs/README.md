@@ -9,6 +9,7 @@ same engine through Python, the CLI, or the optional HTTP API.
 From PowerShell in the repository root:
 
 ```powershell
+if (-not (Test-Path .venv)) { py -3 -m venv .venv }
 .\.venv\Scripts\python.exe -m pip install -e ".[hash,detect,documents,api,remote,vec]"
 .\scripts\run_user_test.ps1 -LibraryPath "C:\path\to\your\media"
 ```
@@ -45,4 +46,5 @@ This script binds only to loopback. Docker binds the process inside its
 container to `0.0.0.0`, publishes it only on host loopback, and requires the
 configured bearer token.
 
-See `docs/DEPLOYMENT.md` and `docker/README.md` for container and GPU profiles.
+See `docs/DEPLOYMENT.md`, `docs/AI_TAGGING.md`, and `docker/README.md` for
+container, local-model, safety, and GPU profiles.

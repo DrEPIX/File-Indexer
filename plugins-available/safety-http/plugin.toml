@@ -1,0 +1,39 @@
+[plugin]
+id = "local.safety"
+version = "1.0.0"
+transport = "http"
+accepts = ["image", "video"]
+emits = ["safety.nsfw", "safety.nsfw.frame"]
+depends_on = []
+model_id = "Falconsai/nsfw_image_detection"
+description = "Local advisory NSFW classification for images and sampled video frames"
+transfer = "both"
+
+[plugin.requires]
+pixels = true
+frames = true
+audio = false
+text = false
+metadata_only = false
+gpu = false
+network = true
+max_concurrency = 1
+
+[plugin.http]
+base_url = "http://safety:9300"
+auth_token = ""
+timeout_s = 180.0
+health_path = "/health"
+manifest_path = "/manifest"
+analyze_path = "/analyze"
+
+[plugin.namespaces."safety.nsfw"]
+display_name = "NSFW safety rating"
+description = "Advisory local model rating; never deletes or hides media by itself."
+value_type = "categorical"
+facetable = true
+
+[plugin.namespaces."safety.nsfw.frame"]
+display_name = "Flagged video frames"
+value_type = "categorical"
+facetable = false

@@ -1,0 +1,32 @@
+{
+  "models": [
+    {
+      "id": "mobilenet-ssd-custom",
+      "enabled": true,
+      "prototxt": "mobilenet-ssd/deploy.prototxt",
+      "model": "mobilenet-ssd/model.caffemodel",
+      "labels": "mobilenet-ssd/labels.txt",
+      "output_format": "ssd7",
+      "input_size": [300, 300],
+      "scale": 0.007843,
+      "mean": [127.5, 127.5, 127.5],
+      "swap_rb": false,
+      "threshold": 0.55,
+      "max_detections": 100
+    },
+    {
+      "id": "second-domain-model",
+      "enabled": false,
+      "prototxt": "second/deploy.prototxt",
+      "weights": "second/weights.caffemodel",
+      "labels": ["background", "class-one", "class-two"],
+      "output_format": "ssd7",
+      "input_size": [512, 512],
+      "scale": 1.0,
+      "mean": [104.0, 117.0, 123.0],
+      "swap_rb": false,
+      "threshold": 0.6,
+      "max_detections": 50
+    }
+  ]
+}

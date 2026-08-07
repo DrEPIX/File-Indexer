@@ -44,6 +44,9 @@ def test_health_auth_surface_and_asset(tmp_path: Path) -> None:
     )
     try:
         with TestClient(app) as client:
+            root = client.get("/", follow_redirects=False)
+            assert root.status_code == 307
+            assert root.headers["location"] == "/docs"
             assert client.get("/api/health").status_code == 200
             assert client.get("/api/surface").status_code == 401
             headers = {"Authorization": "Bearer test-token-123456"}
@@ -53,6 +56,7 @@ def test_health_auth_surface_and_asset(tmp_path: Path) -> None:
             detail = client.get("/api/assets/1", headers=headers)
             assert detail.status_code == 200
             assert detail.json()["asset"]["media_type"] == "image"
+            assert client.get("/api/assets/0", headers=headers).status_code == 422
             plugins = client.get("/api/plugins", headers=headers)
             assert plugins.status_code == 200, plugins.text
             assert isinstance(plugins.json(), list)
@@ -135,6 +139,13 @@ def test_search_uses_qol_filters_and_core_fts_sanitizer(tmp_path: Path) -> None:
             )
             assert tagged.status_code == 200, tagged.text
             assert tagged.json()["total"] == 1
+
+            invalid = client.post(
+                "/api/annotations",
+                headers=headers,
+                json={"asset_id": 1, "namespace": "Not Valid!", "label": "x"},
+            )
+            assert invalid.status_code == 422
     finally:
         engine.close()
 

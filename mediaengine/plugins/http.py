@@ -324,9 +324,21 @@ class HttpAnalyzer:
             embedding=embedding,
         )
 
-    @staticmethod
-    def _optional_float(value: object) -> float | None:
-        return None if value is None else float(value)
+    def _optional_float(self, value: object) -> float | None:
+        if value is None:
+            return None
+        if not isinstance(value, (int, float, str)):
+            raise PluginContractError(
+                f"{self.info.id} returned a non-numeric value where a number was required",
+                plugin_id=self.info.id,
+            )
+        try:
+            return float(value)
+        except ValueError as exc:
+            raise PluginContractError(
+                f"{self.info.id} returned an invalid number {value!r}",
+                plugin_id=self.info.id,
+            ) from exc
 
     def _json_object(self, response: Any, operation: str) -> dict[str, Any]:
         try:

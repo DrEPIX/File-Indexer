@@ -7,6 +7,7 @@ import base64
 import binascii
 import io
 import os
+import re
 import threading
 import time
 from collections.abc import Callable, Mapping, Sequence
@@ -21,7 +22,7 @@ from vision_model import FACE_EMBEDDING_DIM, MODEL_ID, FrameResult, VisionAnalyz
 
 PROTOCOL = "mediaengine.analyzer/1"
 PLUGIN_ID = "acme.vision"
-PLUGIN_VERSION = "1.0.0"
+PLUGIN_VERSION = "1.1.0"
 
 
 class Runtime:
@@ -230,6 +231,15 @@ def region(box: tuple[float, float, float, float], image: Image.Image, frame_tim
     }
 
 
+def object_namespace(backend: str, model_id: str) -> str:
+    """Give each Caffe model its own child namespace to prevent collisions."""
+
+    if backend != "caffe":
+        return "vision.object"
+    suffix = re.sub(r"[^a-z0-9._-]+", "-", model_id.lower()).strip(".-") or "unnamed"
+    return f"vision.object.{suffix[:48]}"
+
+
 def build_annotations(results: Sequence[FrameResult], images: Sequence[Image.Image], times: Sequence[float | None]) -> list[dict[str, Any]]:
     output: list[dict[str, Any]] = []
     for result, image, frame_time in zip(results, images, times, strict=True):
@@ -245,9 +255,10 @@ def build_annotations(results: Sequence[FrameResult], images: Sequence[Image.Ima
         )
         output.extend(
             {
-                "namespace": "vision.object",
+                "namespace": object_namespace(detected.backend, detected.model_id),
                 "label": detected.label,
                 "confidence": detected.confidence,
+                "value": {"backend": detected.backend, "model_id": detected.model_id},
                 "region": region(detected.box, image, frame_time, "object"),
             }
             for detected in result.objects

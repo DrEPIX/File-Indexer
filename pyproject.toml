@@ -54,6 +54,9 @@ all = [
 [project.scripts]
 mediaengine = "mediaengine.cli:main"
 
+[project.gui-scripts]
+mediaengine-v1 = "mediaengine.gui:main"
+
 # Built-in analyzers are registered through the same entry-point group that
 # third-party plugins use. There is no privileged path into the registry.
 [project.entry-points."mediaengine.analyzers"]

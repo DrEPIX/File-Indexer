@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import hmac
 import os
+import re
 import sys
 import threading
 import uuid
@@ -17,6 +18,9 @@ from typing import Any, cast
 
 from ..config import Config, load_config
 from ..engine import MediaEngine
+
+
+_NAMESPACE_RE = re.compile(r"^[a-z0-9._-]{1,64}$")
 
 
 def _import_qol() -> tuple[Any, Any, Any]:
@@ -170,7 +174,7 @@ def create_app(
     try:
         from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
         from fastapi.middleware.cors import CORSMiddleware
-        from fastapi.responses import FileResponse
+        from fastapi.responses import FileResponse, RedirectResponse
     except ImportError as exc:
         raise RuntimeError("FastAPI is not installed; install mediaengine[api]") from exc
 
@@ -223,6 +227,10 @@ def create_app(
 
     protected = [Depends(require_auth)]
 
+    @app.get("/", include_in_schema=False)
+    def root() -> Any:
+        return RedirectResponse("/docs" if cfg.api.docs_enabled else "/api/health")
+
     @app.get("/api/health")
     def health() -> dict[str, Any]:
         return cast(dict[str, Any], runtime.health())
@@ -252,6 +260,8 @@ def create_app(
 
     @app.get("/api/assets/{asset_id}", dependencies=protected)
     def asset(asset_id: int) -> Any:
+        if asset_id < 1:
+            raise HTTPException(status_code=422, detail="asset_id must be positive")
         result = service.asset(asset_id)
         if result is None:
             raise HTTPException(status_code=404, detail="asset not found")
@@ -263,10 +273,17 @@ def create_app(
 
     @app.get("/api/assets/{asset_id}/thumb", dependencies=protected)
     def thumbnail(asset_id: int) -> Any:
+        if asset_id < 1:
+            raise HTTPException(status_code=422, detail="asset_id must be positive")
         options = runtime.repos.derivatives.for_asset(asset_id, kind="thumb")
         if not options:
             raise HTTPException(status_code=404, detail="thumbnail not available")
-        chosen = min(options, key=lambda item: abs(int(item["variant"]) - 512))
+        numeric = [item for item in options if str(item.get("variant", "")).isdigit()]
+        chosen = (
+            min(numeric, key=lambda item: abs(int(item["variant"]) - 512))
+            if numeric
+            else options[0]
+        )
         root = cfg.storage.derivatives_path.resolve()
         path = (root / str(chosen["rel_path"])).resolve()
         try:
@@ -279,6 +296,8 @@ def create_app(
 
     @app.delete("/api/assets/{asset_id}/derived", dependencies=protected)
     def purge_asset(asset_id: int) -> dict[str, Any]:
+        if asset_id < 1:
+            raise HTTPException(status_code=422, detail="asset_id must be positive")
         return {"asset_id": asset_id, "deleted": runtime.purge_asset_derivatives(asset_id)}
 
     @app.get("/api/facets", dependencies=protected)
@@ -307,8 +326,13 @@ def create_app(
             raise HTTPException(
                 status_code=422, detail="asset_id, namespace, and label are required"
             ) from exc
-        if not namespace or not label:
-            raise HTTPException(status_code=422, detail="namespace and label must be non-empty")
+        if not _NAMESPACE_RE.fullmatch(namespace):
+            raise HTTPException(
+                status_code=422,
+                detail="namespace must match [a-z0-9._-]{1,64}",
+            )
+        if not label or len(label) > 256:
+            raise HTTPException(status_code=422, detail="label must be 1 to 256 characters")
         if runtime.repos.assets.get_asset(asset_id) is None:
             raise HTTPException(status_code=404, detail="asset not found")
         annotation_id = runtime.repos.annotations.add_user_annotation(

@@ -1,12 +1,12 @@
 [plugin]
 id = "acme.vision"
-version = "1.0.0"
+version = "1.1.0"
 transport = "http"
 accepts = ["image", "video"]
 emits = ["vision.face", "vision.object"]
 depends_on = []
 model_id = "facenet-vggface2+fasterrcnn-resnet50-fpn-v2"
-description = "Optional CUDA-accelerated face embeddings and object detection"
+description = "Local face embeddings plus torchvision and multi-model Caffe detection"
 transfer = "both"
 embedding_dim = 512
 

@@ -10,12 +10,15 @@ Outputs:
 - `clip=embedding`: one asset vector for an image;
 - for video, up to `config.max_keyframes` frame-region vectors plus one
   normalized mean-pooled asset vector;
-- optional `clip.tag` labels with real softmax confidences from
-  `config.prompts`.
+- `visual.category` labels with real softmax confidences and a group value.
 
-Default prompts are indoor, outdoor, document, screenshot, portrait, and
-landscape. Set `prompts = []` to disable labels and `tag_threshold` to control
-emission. The model's native vector is never padded or truncated.
+The starter taxonomy covers common video formats, subjects, activities, and
+scenes. It intentionally avoids sensitive-trait inference. Set `prompts` to a
+custom list for library-specific categories, `prompts = []` to disable tags,
+`tag_threshold` to tune sensitivity, and `top_k` (default 5) to cap output.
+The model's native vector is never padded or truncated. Video category evidence
+is aggregated across sampled frames so a short event remains searchable without
+letting one noisy frame dominate the whole asset.
 
 ## Model cache and network
 
@@ -51,4 +54,3 @@ engine runs directly on the host, copy `plugin.toml` and change `base_url` to
 
 Set the same optional token in `CLIP_AUTH_TOKEN` and `[plugin.http].auth_token`.
 When configured, every endpoint requires `Authorization: Bearer <token>`.
-

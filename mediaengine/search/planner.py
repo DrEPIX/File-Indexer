@@ -138,6 +138,13 @@ class SearchPlanner:
             where.append(clause)
             params.extend(clause_params)
 
+        for index, label_filter in enumerate(query.excluded_labels):
+            clause, clause_params = self._label_exists(
+                label_filter, query, index, alias_prefix="ex"
+            )
+            where.append(f"NOT ({clause})")
+            params.extend(clause_params)
+
         if query.camera:
             where.append("(t.camera_make LIKE ? OR t.camera_model LIKE ?)")
             like = f"%{query.camera}%"
@@ -167,7 +174,12 @@ class SearchPlanner:
         return where, joins, params, order
 
     def _label_exists(
-        self, label_filter: LabelFilter, query: Query, index: int
+        self,
+        label_filter: LabelFilter,
+        query: Query,
+        index: int,
+        *,
+        alias_prefix: str = "an",
     ) -> tuple[str, list[Any]]:
         """One label filter as an EXISTS subquery.
 
@@ -175,7 +187,7 @@ class SearchPlanner:
         ``color.dominant``) to mirror the repository's facet semantics —
         the two must agree or clicking a facet value could yield zero results.
         """
-        alias = f"an{index}"
+        alias = f"{alias_prefix}{index}"
         conditions = [
             f"{alias}.asset_id = a.id",
             f"{alias}.superseded_by IS NULL",

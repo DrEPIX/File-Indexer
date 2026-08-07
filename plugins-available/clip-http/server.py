@@ -17,12 +17,19 @@ from fastapi import Depends, FastAPI, Header
 from fastapi.responses import JSONResponse
 from PIL import Image, UnidentifiedImageError
 
-from model import DEFAULT_LABELS, MODEL_ID, EncodedBatch, Encoder, load_default_encoder
+from model import (
+    DEFAULT_CATEGORIES,
+    DEFAULT_LABELS,
+    MODEL_ID,
+    EncodedBatch,
+    Encoder,
+    load_default_encoder,
+)
 
 
 PROTOCOL = "mediaengine.analyzer/1"
 PLUGIN_ID = "acme.clip"
-PLUGIN_VERSION = "1.0.0"
+PLUGIN_VERSION = "1.1.0"
 EXPECTED_EMBEDDING_DIM = 512
 
 
@@ -101,7 +108,7 @@ def manifest() -> dict[str, Any]:
         "model_id": MODEL_ID,
         "embedding_dim": EXPECTED_EMBEDDING_DIM,
         "accepts": ["image", "video"],
-        "emits": ["clip", "clip.tag"],
+        "emits": ["clip", "visual.category"],
         "depends_on": [],
         "transfer": "both",
         "requires": {
@@ -118,7 +125,12 @@ def manifest() -> dict[str, Any]:
         },
         "namespaces": {
             "clip": {"display_name": "Visual similarity", "value_type": "text", "facetable": False},
-            "clip.tag": {"display_name": "CLIP zero-shot labels", "value_type": "categorical", "facetable": True},
+            "visual.category": {
+                "display_name": "Visual categories",
+                "description": "Local zero-shot tags for format, subject, activity and scene.",
+                "value_type": "categorical",
+                "facetable": True,
+            },
         },
     }
 
@@ -224,15 +236,34 @@ def mean_normalized(vectors: Sequence[Sequence[float]]) -> list[float]:
     return [value / norm for value in mean] if norm > 0 else mean
 
 
-def tag_annotations(scores: Mapping[str, float], config: Mapping[str, Any]) -> list[dict[str, Any]]:
-    """Emit configurable zero-shot labels at or above a confidence threshold."""
+def category_group(label: str) -> str:
+    """Return the built-in facet group or ``custom`` for operator prompts."""
 
-    threshold = float(config.get("tag_threshold", 0.20))
+    for group, labels in DEFAULT_CATEGORIES.items():
+        if label in labels:
+            return group
+    return "custom"
+
+
+def tag_annotations(
+    scores: Mapping[str, float], config: Mapping[str, Any], *, sampled_frames: int
+) -> list[dict[str, Any]]:
+    """Emit only the strongest configurable zero-shot labels."""
+
+    threshold = float(config.get("tag_threshold", 0.10))
     if not 0.0 <= threshold <= 1.0:
         raise ValueError("config.tag_threshold must be between 0 and 1")
+    top_k = int(config.get("top_k", 5))
+    if not 1 <= top_k <= 32:
+        raise ValueError("config.top_k must be between 1 and 32")
     return [
-        {"namespace": "clip.tag", "label": label, "confidence": float(confidence)}
-        for label, confidence in scores.items()
+        {
+            "namespace": "visual.category",
+            "label": label,
+            "confidence": float(confidence),
+            "value": {"group": category_group(label), "sampled_frames": sampled_frames},
+        }
+        for label, confidence in sorted(scores.items(), key=lambda item: item[1], reverse=True)[:top_k]
         if confidence >= threshold
     ]
 
@@ -278,7 +309,7 @@ def build_annotations(
     annotations: list[dict[str, Any]] = []
     if media_type == "image":
         annotations.append({"namespace": "clip", "label": "embedding", "embedding": batch.embeddings[0]})
-        annotations.extend(tag_annotations(batch.label_scores[0], config))
+        annotations.extend(tag_annotations(batch.label_scores[0], config, sampled_frames=1))
         return annotations
     for vector, frame_time in zip(batch.embeddings, frame_times, strict=True):
         annotations.append(
@@ -291,11 +322,16 @@ def build_annotations(
         )
     annotations.append({"namespace": "clip", "label": "embedding", "embedding": mean_normalized(batch.embeddings)})
     if batch.label_scores:
-        averaged = {
-            label: sum(row.get(label, 0.0) for row in batch.label_scores) / len(batch.label_scores)
+        # A short event should remain discoverable without letting one noisy
+        # frame dominate the whole video. Blend max evidence with the mean.
+        aggregated = {
+            label: 0.65 * max(row.get(label, 0.0) for row in batch.label_scores)
+            + 0.35 * sum(row.get(label, 0.0) for row in batch.label_scores) / len(batch.label_scores)
             for label in batch.label_scores[0]
         }
-        annotations.extend(tag_annotations(averaged, config))
+        annotations.extend(
+            tag_annotations(aggregated, config, sampled_frames=len(batch.label_scores))
+        )
     return annotations
 
 

@@ -41,3 +41,19 @@ services:
             - driver: nvidia
               count: 1
               capabilities: [gpu]
+
+  safety:
+    build:
+      args:
+        TORCH_INDEX_URL: https://download.pytorch.org/whl/cu121
+      additional_contexts:
+        plugin_base: service:plugin-base
+    environment:
+      SAFETY_DEVICE: cuda
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]

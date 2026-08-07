@@ -115,6 +115,16 @@ class VisionContractTests(unittest.TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertFalse(response.json()["error"]["retryable"])
 
+    def test_caffe_models_receive_collision_safe_child_namespaces(self) -> None:
+        self.assertEqual(
+            server.object_namespace("caffe", "My Domain/Detector v2"),
+            "vision.object.my-domain-detector-v2",
+        )
+        self.assertEqual(
+            server.object_namespace("torchvision", "fasterrcnn"),
+            "vision.object",
+        )
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

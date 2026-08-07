@@ -10,7 +10,30 @@ from PIL import Image
 
 
 MODEL_ID = "openai/clip-vit-base-patch32"
-DEFAULT_LABELS = ("indoor", "outdoor", "document", "screenshot", "portrait", "landscape")
+
+# A broad starter taxonomy, intentionally limited to observable content and
+# activity. It avoids identity, ethnicity, health, religion and other
+# sensitive-trait inference. Operators can replace it through per-plugin
+# config without changing code or the database schema.
+DEFAULT_CATEGORIES: dict[str, tuple[str, ...]] = {
+    "format": (
+        "animation", "gameplay", "live performance", "screen recording",
+        "security camera footage", "slideshow", "tutorial", "vlog",
+    ),
+    "subject": (
+        "animals", "artwork", "documents and text", "food", "nature",
+        "people", "technology", "vehicles",
+    ),
+    "activity": (
+        "celebration", "conversation", "cooking", "exercise", "making music",
+        "shopping", "sports", "technology use", "travel",
+    ),
+    "scene": (
+        "city", "home", "nature", "office", "outdoors", "road",
+        "sports venue", "stage",
+    ),
+}
+DEFAULT_LABELS = tuple(label for labels in DEFAULT_CATEGORIES.values() for label in labels)
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,8 +90,8 @@ class ClipEncoder:
 
         if self._model is not None:
             return self
-        import torch  # type: ignore[import-not-found]
-        from transformers import CLIPModel, CLIPProcessor  # type: ignore[import-not-found]
+        import torch
+        from transformers import CLIPModel, CLIPProcessor
 
         if self.requested_device == "auto":
             device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -106,7 +129,7 @@ class ClipEncoder:
             image_features = image_features / image_features.norm(dim=-1, keepdim=True)
             score_rows: list[dict[str, float]] = []
             if labels:
-                prompts = [f"a photo that is {label}" for label in labels]
+                prompts = [f"a representative video frame showing {label}" for label in labels]
                 text_inputs = processor(text=prompts, return_tensors="pt", padding=True)
                 text_inputs = {key: value.to(self._device) for key, value in text_inputs.items()}
                 text_features = model.get_text_features(**text_inputs)

@@ -73,6 +73,9 @@ class Query:
     labels: list[LabelFilter] = field(default_factory=list)
     """ANDed. Clicking two facet values narrows; OR-groups are a UI concern."""
 
+    excluded_labels: list[LabelFilter] = field(default_factory=list)
+    """Annotations that must not exist on a matching asset."""
+
     sources: list[str] = field(default_factory=list)
     min_confidence: float | None = None
     """Applied to every label filter that does not carry its own."""
@@ -99,6 +102,7 @@ class Query:
             self.text
             or self.media_types
             or self.labels
+            or self.excluded_labels
             or self.camera
             or self.captured_after
             or self.captured_before
@@ -183,6 +187,26 @@ def parse_query(raw: str, *, limit: int = 50, offset: int = 0) -> Query:
         elif key == "not":
             if value.lower() in ("gps", "location", "geo"):
                 query.has_location = False
+            else:
+                # `not:safety.nsfw:flagged` and
+                # `not:safety.nsfw=flagged` are equivalent. With no label,
+                # the whole namespace is excluded.
+                separator = "=" if "=" in value else ":" if ":" in value else None
+                if separator:
+                    namespace, label = value.rsplit(separator, 1)
+                    query.excluded_labels.append(LabelFilter(namespace=namespace, label=label))
+                else:
+                    query.excluded_labels.append(LabelFilter(namespace=value))
+        elif key == "nsfw":
+            mode = value.lower()
+            if mode in ("safe", "hide", "false", "no"):
+                # Strict opt-in filtering: unrated assets are omitted too,
+                # because claiming that unprocessed media is safe would be a lie.
+                query.labels.append(LabelFilter(namespace="safety.nsfw", label="safe"))
+            elif mode in ("only", "flagged", "true", "yes"):
+                query.labels.append(LabelFilter(namespace="safety.nsfw", label="flagged"))
+            elif mode == "review":
+                query.labels.append(LabelFilter(namespace="safety.nsfw", label="review"))
         elif key == "sort":
             direction_down = True
             name = value.lower()

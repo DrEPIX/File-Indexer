@@ -70,7 +70,7 @@ class ContractTests(unittest.TestCase):
         manifest = self.client.get("/manifest").json()
         self.assertEqual(manifest["protocol"], server.PROTOCOL)
         self.assertEqual(manifest["id"], "acme.clip")
-        self.assertEqual(manifest["version"], "1.0.0")
+        self.assertEqual(manifest["version"], "1.1.0")
         self.assertEqual(manifest["embedding_dim"], 512)
         self.assertEqual(manifest["transfer"], "both")
         self.assertEqual(manifest["accepts"], ["image", "video"])
@@ -168,6 +168,22 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(len(embeddings), 3)  # two frames plus one mean-pooled asset vector
         self.assertTrue(all(len(embedding) == declared == 512 for embedding in embeddings))
         self.assertNotIn("region", result["annotations"][2])
+
+    def test_default_taxonomy_emits_ranked_visual_categories(self) -> None:
+        from tempfile import TemporaryDirectory
+
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "fixture.jpg"
+            path.write_bytes(jpeg_bytes())
+            payload = work_item(path)
+            payload["config"] = {"tag_threshold": 0.0, "top_k": 3}
+            response = self.client.post("/analyze", json=payload)
+        categories = [
+            item for item in response.json()["annotations"]
+            if item["namespace"] == "visual.category"
+        ]
+        self.assertEqual(len(categories), 3)
+        self.assertTrue(all(item["value"]["group"] in {"format", "subject", "activity", "scene"} for item in categories))
 
     def test_corrupt_image_is_permanent_400(self) -> None:
         from tempfile import TemporaryDirectory
