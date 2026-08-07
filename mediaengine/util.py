@@ -35,6 +35,7 @@ __all__ = [
     "coerce_int",
     "setup_logging",
     "JsonFormatter",
+    "long_path",
 ]
 
 T = TypeVar("T")
@@ -177,6 +178,33 @@ def safe_filename(name: str, *, max_length: int = 200) -> str:
         return cleaned
     encoded = cleaned.encode("utf-8")[:max_length]
     return encoded.decode("utf-8", errors="ignore") or "unnamed"
+
+
+def long_path(path: Path | str) -> str:
+    """Make a path safe to open on Windows regardless of its length.
+
+    Windows caps ordinary paths at 260 characters unless both the OS and the
+    application opt in to long paths. A photo library nested a few folders deep
+    with descriptive filenames passes that limit routinely, and the failure is
+    an opaque ``FileNotFoundError`` on a file that plainly exists. The ``\\\\?\\``
+    prefix bypasses the limit, but only for a fully resolved absolute path with
+    no ``..`` and no forward slashes — so the prefix is only applied where it is
+    both needed and valid. A no-op everywhere else.
+    """
+    text = str(path)
+    if os.name != "nt" or len(text) < 250 or text.startswith("\\\\?\\"):
+        return text
+    try:
+        resolved = Path(text).resolve()
+    except (OSError, ValueError):
+        return text
+    absolute = str(resolved)
+    if not absolute[1:3] == ":\\":
+        # A UNC path takes a different prefix; anything else is left alone.
+        if absolute.startswith("\\\\"):
+            return "\\\\?\\UNC\\" + absolute[2:]
+        return text
+    return "\\\\?\\" + absolute
 
 
 def coerce_float(value: Any) -> float | None:
