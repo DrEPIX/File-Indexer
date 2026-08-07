@@ -68,3 +68,8 @@ terminal.
 The executable is written to
 `dist\File Indexer V1\File Indexer V1.exe`. Keep the files in that folder
 together when copying it to another computer.
+
+For a temporary single-file portable build, use
+`.\scripts\build_v1.ps1 -Clean -OneFile`. It writes
+`dist\portable\File Indexer V1.exe`; optional AI model services and their
+multi-gigabyte weights remain external.

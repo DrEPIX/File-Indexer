@@ -1,5 +1,6 @@
 param(
-    [switch]$Clean
+    [switch]$Clean,
+    [switch]$OneFile
 )
 
 $ErrorActionPreference = "Stop"
@@ -15,28 +16,41 @@ if ($LASTEXITCODE -ne 0) {
     throw "PyInstaller is not installed. Run: .\.venv\Scripts\python.exe -m pip install pyinstaller"
 }
 
+$DistPath = if ($OneFile) {
+    Join-Path $ProjectRoot "dist\portable"
+} else {
+    Join-Path $ProjectRoot "dist"
+}
+
 $Arguments = @(
     "-m", "PyInstaller",
     "--noconfirm",
     "--windowed",
     "--name", "File Indexer V1",
-    "--distpath", (Join-Path $ProjectRoot "dist"),
+    "--distpath", $DistPath,
     "--workpath", (Join-Path $ProjectRoot "build\pyinstaller-v1"),
     "--specpath", (Join-Path $ProjectRoot "build"),
     "--collect-data", "mediaengine",
     "--collect-submodules", "mediaengine.plugins.builtin",
-    "--copy-metadata", "mediaengine",
-    (Join-Path $ProjectRoot "File Indexer V1.pyw")
+    "--copy-metadata", "mediaengine"
 )
 
 if ($Clean) {
-    $Arguments = $Arguments[0..2] + "--clean" + $Arguments[3..($Arguments.Count - 1)]
+    $Arguments += "--clean"
 }
+if ($OneFile) {
+    $Arguments += "--onefile"
+}
+$Arguments += (Join-Path $ProjectRoot "File Indexer V1.pyw")
 
 & $Python @Arguments
 if ($LASTEXITCODE -ne 0) {
     throw "V1 packaging failed with exit code $LASTEXITCODE"
 }
 
-$Executable = Join-Path $ProjectRoot "dist\File Indexer V1\File Indexer V1.exe"
+$Executable = if ($OneFile) {
+    Join-Path $DistPath "File Indexer V1.exe"
+} else {
+    Join-Path $DistPath "File Indexer V1\File Indexer V1.exe"
+}
 Write-Host "Built: $Executable"
