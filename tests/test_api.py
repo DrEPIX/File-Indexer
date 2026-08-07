@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import threading
 import time
 
 from fastapi.testclient import TestClient
@@ -157,6 +158,34 @@ def test_search_rejects_unimplemented_vector_similarity(tmp_path: Path) -> None:
             assert response.status_code == 422
             assert "vector" in response.json()["detail"]
     finally:
+        engine.close()
+
+
+def test_api_rejects_a_second_concurrent_scan(tmp_path: Path) -> None:
+    engine = _engine(tmp_path)
+    gate = threading.Event()
+
+    def slow_scan(*args: object, **kwargs: object) -> list[object]:
+        gate.wait(timeout=2)
+        return []
+
+    engine.scan = slow_scan  # type: ignore[method-assign]
+    app = create_app(
+        engine.config,
+        engine=engine,
+        sheet_path=Path(__file__).parents[1] / "qol_contract" / "change_sheet.toml",
+    )
+    headers = {"Authorization": "Bearer test-token-123456"}
+    try:
+        with TestClient(app) as client:
+            first = client.post("/api/scan", headers=headers, json={})
+            assert first.status_code == 202
+            second = client.post("/api/scan", headers=headers, json={})
+            assert second.status_code == 409
+            assert first.json()["id"] in second.json()["detail"]
+            gate.set()
+    finally:
+        gate.set()
         engine.close()
 
 

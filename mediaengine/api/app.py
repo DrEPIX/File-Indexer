@@ -71,6 +71,16 @@ class JobManager:
             "error": None,
         }
         with self._lock:
+            active = next(
+                (
+                    item
+                    for item in self._jobs.values()
+                    if item.get("kind") == "scan" and item.get("state") in {"queued", "running"}
+                ),
+                None,
+            )
+            if active is not None:
+                raise RuntimeError(f"scan job {active['id']} is already running")
             self._jobs[job_id] = job
             self._tokens[job_id] = token
 
@@ -312,7 +322,10 @@ def create_app(
 
     @app.post("/api/scan", dependencies=protected, status_code=202)
     def start_scan(payload: dict[str, Any]) -> Any:
-        return jobs.start(payload)
+        try:
+            return jobs.start(payload)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     @app.get("/api/jobs/{job_id}", dependencies=protected)
     def get_job(job_id: str) -> Any:
