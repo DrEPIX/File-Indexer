@@ -1,5 +1,7 @@
 """FastAPI controller over the engine and declarative QoL service."""
 
+# mypy: disallow_untyped_decorators=False
+
 from __future__ import annotations
 
 import asyncio
@@ -8,9 +10,10 @@ import os
 import sys
 import threading
 import uuid
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from ..config import Config, load_config
 from ..engine import MediaEngine
@@ -59,7 +62,14 @@ class JobManager:
 
         job_id = uuid.uuid4().hex
         token = CancelToken()
-        job = {"id": job_id, "state": "queued", "progress": None, "result": None, "error": None}
+        job: dict[str, Any] = {
+            "id": job_id,
+            "kind": "scan",
+            "state": "queued",
+            "progress": None,
+            "result": None,
+            "error": None,
+        }
         with self._lock:
             self._jobs[job_id] = job
             self._tokens[job_id] = token
@@ -110,7 +120,7 @@ class JobManager:
 
     def start_backfill(self, plugin_id: str, limit: int | None) -> dict[str, Any]:
         job_id = uuid.uuid4().hex
-        job = {
+        job: dict[str, Any] = {
             "id": job_id,
             "kind": "plugin_backfill",
             "plugin_id": plugin_id,
@@ -168,7 +178,7 @@ def create_app(
     jobs = JobManager(runtime)
 
     @asynccontextmanager
-    async def lifespan(_: Any):
+    async def lifespan(_: Any) -> AsyncIterator[None]:
         runtime.start()
         try:
             yield
@@ -205,7 +215,7 @@ def create_app(
 
     @app.get("/api/health")
     def health() -> dict[str, Any]:
-        return runtime.health()
+        return cast(dict[str, Any], runtime.health())
 
     @app.get("/api/surface", dependencies=protected)
     def surface() -> Any:

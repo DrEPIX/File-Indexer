@@ -9,9 +9,10 @@ can expose an existing field but can never inject SQL.
 from __future__ import annotations
 
 import base64
+import binascii
 import json
 from collections.abc import Sequence
-from typing import Any
+from typing import Any, cast
 
 from .errors import QueryError
 from .models import GroupOperator, PlannedClause, PlannedGroup, SearchPlan
@@ -71,7 +72,7 @@ class MediaEngineBackend:
 
     def get_asset(self, asset_id: int) -> dict[str, Any] | None:
         self.engine.start()
-        return self.engine.repos.assets.export_asset(asset_id)
+        return cast(dict[str, Any] | None, self.engine.repos.assets.export_asset(asset_id))
 
     def list_facets(self, namespace: str | None = None) -> dict[str, Any]:
         self.engine.start()
@@ -268,10 +269,21 @@ class MediaEngineBackend:
             raise QueryError("geo filter value must be an object")
         try:
             if operator == "within_bbox":
-                south = float(value.get("min_lat", value.get("south")))
-                north = float(value.get("max_lat", value.get("north")))
-                west = float(value.get("min_lon", value.get("west")))
-                east = float(value.get("max_lon", value.get("east")))
+                raw_south = value.get("min_lat", value.get("south"))
+                raw_north = value.get("max_lat", value.get("north"))
+                raw_west = value.get("min_lon", value.get("west"))
+                raw_east = value.get("max_lon", value.get("east"))
+                if (
+                    raw_south is None
+                    or raw_north is None
+                    or raw_west is None
+                    or raw_east is None
+                ):
+                    raise ValueError("bbox requires south, north, west, and east")
+                south = float(raw_south)
+                north = float(raw_north)
+                west = float(raw_west)
+                east = float(raw_east)
                 params.extend([south, north, west, east])
                 return (
                     "EXISTS (SELECT 1 FROM asset_geo gx WHERE gx.id=a.id "
@@ -316,7 +328,14 @@ class MediaEngineBackend:
             if offset < 0:
                 raise ValueError
             return offset
-        except (ValueError, TypeError, KeyError, json.JSONDecodeError) as exc:
+        except (
+            ValueError,
+            TypeError,
+            KeyError,
+            UnicodeDecodeError,
+            binascii.Error,
+            json.JSONDecodeError,
+        ) as exc:
             raise QueryError("invalid search cursor") from exc
 
     @staticmethod

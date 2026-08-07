@@ -5,7 +5,7 @@ from __future__ import annotations
 import tomllib
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any, Iterable, Mapping
+from typing import Any, Iterable, Mapping, cast
 
 from .errors import SheetError
 from .models import FilterDefinition, OperationDefinition, SortDefinition, ValueType
@@ -63,7 +63,7 @@ class SurfaceRegistry:
 
         key = self._aliases.get(key_or_alias, key_or_alias)
         try:
-            return self.filters[key]
+            return cast(FilterDefinition, self.filters[key])
         except KeyError as exc:
             raise SheetError(f"unknown filter: {key_or_alias!r}") from exc
 
@@ -153,4 +153,3 @@ class SurfaceRegistry:
             )
         except (KeyError, TypeError, ValueError) as exc:
             raise SheetError(f"invalid operation declaration: {data!r}: {exc}") from exc
-
