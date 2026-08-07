@@ -62,10 +62,12 @@ mediaengine = "mediaengine.cli:main"
 "example.stub-classifier" = "mediaengine.plugins.builtin.stub_classifier:StubClassifier"
 
 [tool.setuptools.packages.find]
-include = ["mediaengine*"]
+where = [".", "qol_contract/src"]
+include = ["mediaengine*", "mediaengine_qol*"]
 
 [tool.setuptools.package-data]
 mediaengine = ["db/migrations/*.sql", "py.typed"]
+mediaengine_qol = ["py.typed"]
 
 [tool.mypy]
 python_version = "3.11"

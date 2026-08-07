@@ -35,6 +35,7 @@ services:
       MEDIAENGINE__API__HOST: 0.0.0.0
       MEDIAENGINE__API__PORT: "8420"
       MEDIAENGINE__API__AUTH_TOKEN: ${MEDIAENGINE_AUTH_TOKEN:?Set MEDIAENGINE_AUTH_TOKEN to at least 16 random characters}
+      MEDIAENGINE_QOL_SHEET: /config/change_sheet.toml
     ports:
       - "127.0.0.1:${MEDIAENGINE_PORT:-8420}:8420"
     volumes:

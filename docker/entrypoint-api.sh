@@ -24,7 +24,6 @@ if [ "$#" -gt 0 ]; then
 fi
 
 if [ -f /config/config.yaml ]; then
-    exec mediaengine --config /config/config.yaml serve --host 0.0.0.0 --port 8420
+    exec python -m mediaengine.api --config /config/config.yaml --host 0.0.0.0 --port 8420
 fi
-exec mediaengine serve --host 0.0.0.0 --port 8420
-
+exec python -m mediaengine.api --host 0.0.0.0 --port 8420

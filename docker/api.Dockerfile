@@ -34,6 +34,7 @@ RUN apt-get update \
 COPY --from=wheel-builder /wheels /wheels
 RUN python -m pip install --no-cache-dir /wheels/*.whl && rm -rf /wheels
 COPY docker/entrypoint-api.sh /usr/local/bin/mediaengine-entrypoint
+COPY qol_contract/change_sheet.toml /config/change_sheet.toml
 RUN chmod 0555 /usr/local/bin/mediaengine-entrypoint
 
 USER mediaengine
