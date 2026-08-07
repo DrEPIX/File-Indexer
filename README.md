@@ -53,3 +53,18 @@ the Pillow fallback handles images when it is unavailable.
 The standalone backend remains available through the documented Python API,
 CLI, and optional FastAPI service. See [backend and API usage](docs/README.md)
 and [deployment](docs/DEPLOYMENT.md).
+
+## Build a distributable Windows app
+
+Install PyInstaller in the development environment once, then run the build
+script. End users only need the resulting folder; they do not need Python or a
+terminal.
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install pyinstaller
+.\scripts\build_v1.ps1 -Clean
+```
+
+The executable is written to
+`dist\File Indexer V1\File Indexer V1.exe`. Keep the files in that folder
+together when copying it to another computer.

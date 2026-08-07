@@ -109,6 +109,8 @@ class FileIndexerV1:
         self.config = config or load_desktop_config()
         self.engine = MediaEngine(self.config)
         self.events: queue.Queue[tuple[Callable[..., Any], tuple[Any, ...]]] = queue.Queue()
+        self.worker_lock = threading.Lock()
+        self.workers: set[threading.Thread] = set()
         self.cancel_token: CancelToken | None = None
         self.long_job: threading.Thread | None = None
         self.close_pending = False
@@ -396,8 +398,14 @@ class FileIndexerV1:
                 self._post(self._engine_ready)
             except Exception as exc:
                 self._post(self._fatal_startup, exc, traceback.format_exc())
+            finally:
+                with self.worker_lock:
+                    self.workers.discard(threading.current_thread())
 
-        threading.Thread(target=work, name="v1-startup", daemon=True).start()
+        thread = threading.Thread(target=work, name="v1-startup", daemon=True)
+        with self.worker_lock:
+            self.workers.add(thread)
+        thread.start()
 
     def _engine_ready(self) -> None:
         self.status_text.set("●  Library ready")
@@ -421,7 +429,7 @@ class FileIndexerV1:
                 callback(*args)
         except queue.Empty:
             pass
-        if self.close_pending and not self._job_running():
+        if self.close_pending and not self._work_running():
             self._finish_close()
             return
         self.root.after(60, self._drain_events)
@@ -448,8 +456,12 @@ class FileIndexerV1:
             finally:
                 if long_job:
                     self._post(self._long_job_finished)
+                with self.worker_lock:
+                    self.workers.discard(threading.current_thread())
 
         thread = threading.Thread(target=runner, name=f"v1-{name}", daemon=True)
+        with self.worker_lock:
+            self.workers.add(thread)
         if long_job:
             self.long_job = thread
             self.cancel_button.configure(state="normal")
@@ -472,6 +484,11 @@ class FileIndexerV1:
 
     def _job_running(self) -> bool:
         return self.long_job is not None and self.long_job.is_alive()
+
+    def _work_running(self) -> bool:
+        """Whether any engine operation still owns a live worker thread."""
+        with self.worker_lock:
+            return bool(self.workers)
 
     # ── navigation and refresh ─────────────────────────────────────────────
 
@@ -871,7 +888,7 @@ class FileIndexerV1:
                 continue
             messagebox.showerror("Invalid preview cache", "The preview cache cannot be inside a library folder, or it would index its own thumbnails.")
             return
-        if storage_changed and self._job_running():
+        if storage_changed and self._work_running():
             messagebox.showwarning("Job in progress", "Wait for the current job to finish before changing index storage.")
             return
         self.config.library.roots = roots
@@ -907,6 +924,10 @@ class FileIndexerV1:
             self.close_pending = True
             self.cancel_job()
             self.status_text.set("●  Closing safely…")
+            return
+        if self._work_running():
+            self.close_pending = True
+            self.status_text.set("●  Finishing current read…")
             return
         self._finish_close()
 
