@@ -424,7 +424,7 @@ def cmd_purge(args: argparse.Namespace, engine: "MediaEngine") -> int:
 
 def cmd_storage(args: argparse.Namespace, engine: "MediaEngine") -> int:
     """Show where the library is kept, or move it somewhere else."""
-    from .maintenance import describe_storage, plan_relocation, relocate_storage
+    from .maintenance import RelocationMode, describe_storage, plan_relocation, relocate_storage
 
     if not args.move_to and not args.use:
         usage = describe_storage(engine.config)
@@ -449,7 +449,7 @@ def cmd_storage(args: argparse.Namespace, engine: "MediaEngine") -> int:
         return 0
 
     destination = args.move_to or args.use
-    mode = "move" if args.move_to else "adopt"
+    mode: RelocationMode = "move" if args.move_to else "adopt"
     # Everything below rearranges files the database is sitting on, so the
     # engine goes away first. Closing twice is harmless; main() does it again.
     plan = plan_relocation(engine.config, destination, mode=mode)
