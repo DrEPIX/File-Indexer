@@ -1,7 +1,9 @@
 param(
     [string]$PythonPath,
     [switch]$KeepArtifacts,
-    [switch]$SkipVideo
+    [switch]$SkipVideo,
+    [ValidateRange(2, 1000)]
+    [int]$DuplicateCount = 2
 )
 
 $ErrorActionPreference = "Stop"
@@ -87,11 +89,21 @@ try {
         throw "could not create JPEG fixture"
     }
     Copy-Item -LiteralPath $ImagePath -Destination (Join-Path $Library "sunset duplicate.jpg")
+    for ($DuplicateIndex = 3; $DuplicateIndex -le $DuplicateCount; $DuplicateIndex++) {
+        Copy-Item -LiteralPath $ImagePath -Destination (
+            Join-Path $Library ("sunset duplicate {0:D4}.jpg" -f $DuplicateIndex)
+        )
+    }
     $UnicodeLine = "Unicode survives indexing: caf$([char]0x00E9), $([char]0x6771)$([char]0x4EAC), na$([char]0x00EF)ve."
     Set-Content -LiteralPath (Join-Path $Library "research notes.txt") -Encoding UTF8 -Value @(
         "MediaEngine smoke-test document",
         $UnicodeLine,
         "The searchable token is quartz-platypus."
+    )
+    $LongDocumentName = "long-" + ("x" * 140) + ".txt"
+    Set-Content -LiteralPath (Join-Path $Library $LongDocumentName) -Encoding UTF8 -Value @(
+        "Long-filename indexing fixture",
+        "The searchable token is velvet-astronomy."
     )
     [System.IO.File]::WriteAllBytes(
         (Join-Path $Library "empty file.bin"),
@@ -124,8 +136,8 @@ try {
 
     Write-Host "Scanning mixed media and generating derivatives..."
     $First = @(Invoke-MediaEngineJson scan $Library)
-    $ExpectedSeen = if ($VideoCreated) { 4 } else { 3 }
-    $ExpectedAssets = if ($VideoCreated) { 3 } else { 2 }
+    $ExpectedSeen = $DuplicateCount + 2 + $(if ($VideoCreated) { 1 } else { 0 })
+    $ExpectedAssets = if ($VideoCreated) { 4 } else { 3 }
     Assert-Smoke ($First.Count -eq 1) "one root result was expected"
     Assert-Smoke ($First[0].files_seen -ge $ExpectedSeen) "all supported fixture files should be seen"
     Assert-Smoke ($First[0].assets_created -ge $ExpectedAssets) "duplicate bytes should collapse while distinct files index"
@@ -145,6 +157,8 @@ try {
     Assert-Smoke ($ImageSearch.total -eq 1) "byte-identical JPEG copies should resolve to one image asset"
     $TextSearch = Invoke-MediaEngineJson search "quartz-platypus"
     Assert-Smoke ($TextSearch.total -eq 1) "document text should be searchable"
+    $LongNameSearch = Invoke-MediaEngineJson search "velvet-astronomy"
+    Assert-Smoke ($LongNameSearch.total -eq 1) "long-filename document text should be searchable"
 
     Write-Host "Checking idempotent repeat scan..."
     $Second = @(Invoke-MediaEngineJson scan $Library)

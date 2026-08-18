@@ -41,6 +41,7 @@ from typing import Any
 from ..config import Config
 from ..db.repositories import Repositories
 from ..errors import CorruptMedia, MediaEngineError, OperationCancelled
+from ..search.text import expand_filename
 from ..types import FileStatus, LocationSource, MediaType, ScanState
 from ..util import json_dumps, utcnow_iso
 from .control import CancelToken, ProgressCallback, ProgressReporter
@@ -624,7 +625,7 @@ class IngestPipeline:
                 text = item.extracted.text or ""
                 self.repos.search_docs.upsert(
                     item.asset_id,
-                    filename=item.entry.path.name,
+                    filename=expand_filename(item.entry.path.name),
                     doc_text=text[:200_000],
                     conn=conn,
                 )
@@ -648,7 +649,7 @@ class IngestPipeline:
             return False
         path = self.repos.assets.primary_path(asset_id)
         payload = {
-            "filename": Path(path).name if path else "",
+            "filename": expand_filename(Path(path).name) if path else "",
             "tags": self.repos.tags.tag_names_for_asset(asset_id),
             "labels": self.repos.annotations.labels_for_asset(asset_id),
             "doc_text": (self.repos.assets.get_document_text(asset_id) or "")[:200_000],

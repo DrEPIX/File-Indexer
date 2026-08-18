@@ -383,7 +383,10 @@ class BatchProducer:
     ``walk_queue_size × batch_size`` entries regardless of library size.
     """
 
-    __slots__ = ("_walker", "_roots", "_batch_size", "_queue", "_thread", "_error", "_cancel", "_resume")
+    __slots__ = (
+        "_walker", "_roots", "_batch_size", "_queue", "_thread", "_error",
+        "_exhausted", "_cancel", "_resume",
+    )
 
     def __init__(
         self,
@@ -401,6 +404,7 @@ class BatchProducer:
         self._queue: queue.Queue[WalkBatch | None] = queue.Queue(maxsize=queue_size)
         self._thread: threading.Thread | None = None
         self._error: BaseException | None = None
+        self._exhausted = False
         self._cancel = CancelToken() if cancel is None else cancel
         self._resume = resume_after
 
@@ -435,6 +439,7 @@ class BatchProducer:
         while True:
             batch = self._queue.get()
             if batch is None:
+                self._exhausted = True
                 break
             yield batch
         if self._error is not None:
@@ -442,10 +447,15 @@ class BatchProducer:
 
     def stop(self, *, timeout: float = 5.0) -> None:
         """Cancel the walk and join the thread. Safe to call twice."""
-        self._cancel.cancel("walker stopped")
         thread = self._thread
         if thread is None:
             return
+        # A producer that reached its sentinel completed normally. Cancelling
+        # its shared token here used to poison the whole multi-root scan after
+        # the first folder. Only request cancellation when there is still a
+        # live producer to stop early.
+        if thread.is_alive() and not self._exhausted:
+            self._cancel.cancel("walker stopped")
         # Drain so a walker blocked on a full queue can notice the cancel.
         while thread.is_alive():
             try:

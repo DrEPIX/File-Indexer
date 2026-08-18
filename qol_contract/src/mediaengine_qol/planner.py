@@ -58,12 +58,13 @@ class QueryPlanner:
         where = self._plan_group(
             request.where, capabilities, depth=0, max_depth=max_depth
         )
-        if request.text:
+        normalized_text = (request.text.strip() or None) if request.text else None
+        if normalized_text:
             capabilities.add("fts")
         if request.include_facets:
             capabilities.add("facets")
         return SearchPlan(
-            text=request.text.strip() if request.text else None,
+            text=normalized_text,
             where=where,
             sort_field=sort.field,
             direction=direction,
@@ -209,6 +210,8 @@ class QueryPlanner:
                 converted = int(value)
                 if isinstance(value, float) and not value.is_integer():
                     raise ValueError("expected integer without a fractional part")
+                if not -(2**63) <= converted <= 2**63 - 1:
+                    raise ValueError("integer is outside SQLite's signed 64-bit range")
                 return converted
             if definition.value_type in {ValueType.NUMBER, ValueType.DURATION, ValueType.BYTES}:
                 if isinstance(value, bool):

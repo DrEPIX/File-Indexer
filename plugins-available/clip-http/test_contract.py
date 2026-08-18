@@ -75,7 +75,8 @@ class ContractTests(unittest.TestCase):
         manifest = self.client.get("/manifest").json()
         self.assertEqual(manifest["protocol"], server.PROTOCOL)
         self.assertEqual(manifest["id"], "acme.clip")
-        self.assertEqual(manifest["version"], "1.2.0")
+        self.assertEqual(manifest["version"], "1.3.0")
+        self.assertIn("visual.genre", manifest["emits"])
         self.assertEqual(manifest["embedding_dim"], 512)
         self.assertEqual(manifest["transfer"], "both")
         self.assertEqual(manifest["accepts"], ["image", "video"])
@@ -194,6 +195,15 @@ class ContractTests(unittest.TestCase):
                 for item in categories
             )
         )
+
+    def test_genre_labels_use_a_separate_searchable_namespace(self) -> None:
+        annotations = server.tag_annotations(
+            {"horror film": 0.9, "comedy": 0.1},
+            {"tag_threshold": 0.0, "top_k": 2},
+            sampled_frames=3,
+        )
+        self.assertEqual({item["namespace"] for item in annotations}, {"visual.genre"})
+        self.assertEqual(annotations[0]["label"], "horror film")
 
     def test_corrupt_image_is_permanent_400(self) -> None:
         from tempfile import TemporaryDirectory

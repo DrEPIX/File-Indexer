@@ -10,10 +10,11 @@ Outputs:
 - `clip=embedding`: one asset vector for an image;
 - for video, up to `config.max_keyframes` frame-region vectors plus one
   normalized mean-pooled asset vector;
-- `visual.category` labels with real softmax confidences and a group value.
+- `visual.category` labels with facet-normalized confidence and raw-score provenance;
+- `visual.genre` suggestions for film/program genre, memes, ads, and home-video styles.
 
-The starter taxonomy covers common video formats, subjects, activities, and
-scenes. It intentionally avoids sensitive-trait inference. Set `prompts` to a
+The starter taxonomy covers common video formats, subjects, activities,
+scenes, camera styles, and genres. It intentionally avoids sensitive-trait inference. Set `prompts` to a
 custom list for library-specific categories, `prompts = []` to disable tags,
 `tag_threshold` to tune sensitivity, and `top_k` (default 5) to cap output.
 The model's native vector is never padded or truncated. Video category evidence

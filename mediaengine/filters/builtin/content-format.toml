@@ -1,0 +1,88 @@
+# What kind of thing a video is: a film, an episode, a stream VOD, a clip.
+#
+# This is the pack most libraries want first, because "show me movies, not
+# 4,000 clips" is the coarsest useful cut and nothing else provides it.
+
+[pack]
+id = "filters.format"
+name = "Shows and movies"
+display_name = "Kind"
+version = "1.0.0"
+namespace = "content.format"
+method = "vision"
+accepts = ["video"]
+multi_label = false
+threshold = 0.4
+description = "Tell films, TV episodes, stream VODs, trailers, clips, and home video apart."
+
+[[label]]
+name = "movie"
+display = "Movie"
+aliases = ["film", "feature", "cinema"]
+hint = "a feature film: cinematic framing and lighting, title cards or credits, long runtime"
+
+[[label]]
+name = "tv-episode"
+display = "TV episode"
+aliases = ["show", "series", "episode", "tv"]
+hint = "an episode of a scripted series: recurring sets, title sequence, broadcast framing"
+
+[[label]]
+name = "documentary"
+display = "Documentary"
+aliases = ["doc", "factual"]
+hint = "interviews to camera, archive footage, narration, lower-third captions"
+
+[[label]]
+name = "stream-vod"
+display = "Stream VOD"
+aliases = ["livestream", "vod", "twitch stream", "broadcast"]
+hint = "a recorded live stream: webcam overlay, chat panel, alert boxes, persistent HUD"
+
+[[label]]
+name = "clip"
+display = "Short clip"
+aliases = ["short", "highlight", "meme"]
+hint = "a short standalone clip or highlight, often vertical or with burned-in captions"
+
+[[label]]
+name = "trailer"
+display = "Trailer"
+aliases = ["teaser", "promo"]
+hint = "fast cuts, title cards, rating card, promotional text"
+
+[[label]]
+name = "music-video"
+display = "Music video"
+aliases = ["mv", "music"]
+hint = "performance or narrative cut to music, artist on camera, stylised editing"
+
+[[label]]
+name = "tutorial"
+display = "Tutorial or talk"
+aliases = ["howto", "how to", "lecture", "presentation", "guide"]
+hint = "instructional content: slides, screen share, a person explaining to camera"
+
+[[label]]
+name = "home-video"
+display = "Home video"
+aliases = ["personal", "family video", "holiday"]
+hint = "unedited personal footage: handheld, no titles, everyday settings"
+
+[[label]]
+name = "gameplay"
+display = "Gameplay"
+aliases = ["gaming", "game footage", "lets play"]
+hint = "rendered game graphics with a game HUD: health bars, minimap, score, crosshair"
+
+[[label]]
+name = "screen-capture"
+display = "Screen capture"
+aliases = ["screen recording", "desktop capture", "screencast"]
+hint = "a recording of a computer or phone screen: application windows, a desktop, a browser, chat or code on screen"
+
+[[label]]
+name = "sports-broadcast"
+display = "Sports broadcast"
+aliases = ["match", "game", "fixture"]
+hint = "live sport coverage: scoreboard bug, pitch or court, commentary framing"

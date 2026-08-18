@@ -18,35 +18,40 @@ from __future__ import annotations
 
 import re
 import time
+from collections.abc import Callable
 from typing import Any
 
 from ..db.repositories import Repositories
 from ..errors import QueryError
 from .query import LabelFilter, Query
+from .text import compile_match
 
-__all__ = ["SearchPlanner", "SearchResult", "sanitize_match"]
+__all__ = ["BM25_WEIGHTS", "SearchPlanner", "SearchResult", "sanitize_match"]
 
 #: Hard ceiling on facet scoping. Beyond this many matches, facet counts are
 #: computed over the first N ids — a documented approximation, not a bug: an
 #: IN list of 100k ids costs more than the counts are worth.
 _FACET_SCOPE_CAP = 5000
 
-_FTS_TOKEN = re.compile(r"[^\s\"'*:^]+")
+#: Per-column bm25 weights for ``search_index``, in declaration order:
+#: filename, tags, labels, doc_text, place_names, people.
+#:
+#: Unweighted bm25 ranks a stray mention deep inside a 40-page PDF as highly as
+#: the same word in the filename, which is almost never what the person
+#: searching meant. Names and human-applied tags lead; document body text is
+#: still searchable but does not outrank an exact filename hit.
+BM25_WEIGHTS = (10.0, 8.0, 6.0, 1.0, 4.0, 6.0)
+_BM25 = "bm25(search_index, " + ", ".join(f"{weight:g}" for weight in BM25_WEIGHTS) + ")"
 
 
 def sanitize_match(text: str) -> str:
     """Turn free text into an FTS5 MATCH expression that cannot error.
 
-    FTS5 has its own query language; a stray ``-`` or ``:`` from a filename
-    raises a syntax error at query time. Every token is therefore quoted, and
-    the final token gets a ``*`` so the search box behaves as type-ahead.
+    Retained as the simple single-expression form used by callers that only
+    need "will this text match anything"; :func:`~mediaengine.search.text.compile_match`
+    is the richer path the planner uses.
     """
-    tokens = _FTS_TOKEN.findall(text or "")
-    if not tokens:
-        return ""
-    quoted = [f'"{token}"' for token in tokens]
-    quoted[-1] = f"{quoted[-1]}*" if len(tokens[-1]) >= 2 else quoted[-1]
-    return " ".join(quoted)
+    return compile_match(text).strict
 
 
 class SearchResult(dict[str, Any]):
@@ -67,29 +72,51 @@ class SearchResult(dict[str, Any]):
 
 
 class SearchPlanner:
-    """Compiles and runs queries against one :class:`Repositories`."""
+    """Compiles and runs queries against one :class:`Repositories`.
 
-    def __init__(self, repos: Repositories) -> None:
+    ``synonyms`` widens each typed word into the spellings installed filter
+    packs know about, so "footy" reaches assets labelled ``football``. It is
+    injected rather than imported because the planner must stay usable with no
+    packs installed at all.
+    """
+
+    def __init__(
+        self,
+        repos: Repositories,
+        *,
+        synonyms: Callable[[str], tuple[str, ...]] | None = None,
+    ) -> None:
         self.repos = repos
+        self.synonyms = synonyms
 
     # ── public ──────────────────────────────────────────────────────────────
 
     def search(self, query: Query, *, with_facets: bool = True) -> SearchResult:
-        """Run one query; returns items, total, facets and timing."""
+        """Run one query; returns items, total, facets and timing.
+
+        A text query is attempted strictly (every word must appear) and then,
+        only if that found nothing, loosely (any word). Trying in that order is
+        what lets a precise three-word query stay precise while a four-word one
+        still returns its best partial matches instead of an empty screen.
+        """
         started = time.monotonic()
-        where, joins, params, order = self._compile(query)
+        plan = compile_match(query.text, synonyms=self.synonyms)
+        attempts = plan.expressions() or [""]
+        relaxed = False
 
-        base = (
-            "FROM assets a "
-            "LEFT JOIN technical_metadata t ON t.asset_id = a.id "
-            "LEFT JOIN asset_primary_file f ON f.asset_id = a.id "
-            + " ".join(joins)
-        )
-        clause = f" WHERE {' AND '.join(where)}" if where else ""
-
-        total = int(
-            self.repos.db.scalar(f"SELECT COUNT(*) {base}{clause}", params) or 0
-        )
+        for index, expression in enumerate(attempts):
+            where, joins, params, order = self._compile(query, expression)
+            base = (
+                "FROM assets a "
+                "LEFT JOIN technical_metadata t ON t.asset_id = a.id "
+                "LEFT JOIN asset_primary_file f ON f.asset_id = a.id "
+                + " ".join(joins)
+            )
+            clause = f" WHERE {' AND '.join(where)}" if where else ""
+            total = int(self.repos.db.scalar(f"SELECT COUNT(*) {base}{clause}", params) or 0)
+            if total or index == len(attempts) - 1:
+                relaxed = index > 0
+                break
 
         rows = self.repos.db.query(
             "SELECT a.id, a.media_type, a.mime_type, a.size_bytes, a.captured_at, "
@@ -107,23 +134,28 @@ class SearchPlanner:
             offset=query.offset,
             took_ms=round((time.monotonic() - started) * 1000, 1),
         )
+        if relaxed:
+            # The UI says "showing close matches" rather than pretending the
+            # strict query succeeded.
+            result["relaxed"] = True
         if with_facets:
             result["facets"] = self._facets(base, clause, params, total, query)
         return result
 
     # ── compilation ─────────────────────────────────────────────────────────
 
-    def _compile(self, query: Query) -> tuple[list[str], list[str], list[Any], str]:
+    def _compile(
+        self, query: Query, match: str = ""
+    ) -> tuple[list[str], list[str], list[Any], str]:
         where: list[str] = []
         joins: list[str] = []
         params: list[Any] = []
 
-        match = sanitize_match(query.text)
         if match:
             # An INNER JOIN against the term index: non-matching assets fall
             # out before any other predicate runs.
             joins.append(
-                "JOIN (SELECT rowid AS fts_id, bm25(search_index) AS rank "
+                f"JOIN (SELECT rowid AS fts_id, {_BM25} AS rank "
                 "FROM search_index WHERE search_index MATCH ?) s ON s.fts_id = a.id"
             )
             params.append(match)

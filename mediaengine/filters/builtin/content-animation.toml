@@ -1,0 +1,65 @@
+# Animation style, for libraries where "cartoons" is a real shelf.
+#
+# Separate from `filters.format` on purpose: a cartoon can be a movie, an
+# episode, or a clip, and forcing one namespace to answer both questions makes
+# both facets worse.
+
+[pack]
+id = "filters.animation"
+name = "Cartoons and animation"
+display_name = "Animation"
+version = "1.0.0"
+namespace = "content.animation"
+method = "vision"
+accepts = ["video", "image"]
+multi_label = false
+threshold = 0.45
+description = "Separate live action from animation, and tell animation styles apart."
+
+[[label]]
+name = "live-action"
+display = "Live action"
+aliases = ["real", "filmed", "not animated"]
+hint = "photographed real people, places, or objects — not drawn or rendered"
+
+[[label]]
+name = "anime"
+display = "Anime"
+aliases = ["japanese animation", "manga style", "weeb"]
+hint = "Japanese animation style: large expressive eyes, limited animation, distinctive cel shading"
+
+[[label]]
+name = "western-cartoon"
+display = "Western cartoon"
+aliases = ["cartoon", "toon", "saturday morning"]
+hint = "Western 2D cartoon style: bold outlines, flat colour, exaggerated proportions"
+
+[[label]]
+name = "cgi-animation"
+display = "3D / CGI animation"
+aliases = ["3d", "cgi", "pixar", "rendered"]
+hint = "fully computer-rendered 3D characters and environments"
+
+[[label]]
+name = "stop-motion"
+display = "Stop motion"
+aliases = ["claymation", "puppet animation"]
+hint = "physical models or clay photographed frame by frame, subtly jittery movement"
+
+[[label]]
+name = "motion-graphics"
+display = "Motion graphics"
+aliases = ["explainer", "infographic", "kinetic type", "titles"]
+hint = "animated text, charts, logos, and abstract shapes rather than characters"
+
+[[label]]
+name = "pixel-art"
+display = "Pixel art"
+aliases = ["retro", "8 bit", "16 bit", "sprite"]
+hint = "deliberately low-resolution sprite art with visible square pixels"
+
+[[label]]
+name = "mixed-media"
+display = "Mixed live action and animation"
+aliases = ["hybrid", "vfx heavy"]
+hint = "animated elements composited over photographed footage"

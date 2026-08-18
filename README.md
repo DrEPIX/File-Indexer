@@ -8,6 +8,18 @@ Original files are opened read-only and are never modified.
 
 ## Start the desktop app
 
+For the modern thumbnail-first experience, double-click **`Start File Indexer
+Studio.bat`**. Studio uses PySide6/Qt for rounded native rendering, animated
+controls, responsive media tiles, automatic folder watching, and silent video
+hover previews. It opens the same local library as V1 and never requires a CLI.
+Studio now includes a visual folder manager, a searchable AI Analyzer Store,
+five accessible color palettes, adjustable tile density, motion/video-preview
+preferences, and a safe preference reset. Removing a library folder forgets
+only its index entries and generated previews; original media is never deleted.
+
+The stable classic interface remains available through **`Start File Indexer
+V1.bat`**; Studio is an additional frontend and does not overwrite it.
+
 On this checkout, double-click **`Start File Indexer V1.bat`**. The launcher
 uses the existing `.venv` and opens the GUI with `pythonw.exe`, so no console
 window is required. You can also double-click `File Indexer V1.pyw` when `.pyw`
@@ -27,9 +39,10 @@ From then on the desktop app can:
 - review scan history and extraction errors;
 - run enabled analyzers and perform a database integrity check;
 - change library roots and index/cache locations from Settings;
-- switch between Claude Light, Midnight Ink, Sage Studio, and High Contrast;
-- adjust text from 85â€“140%, choose layout density, or reduce motion;
-- adapt from a full desktop workspace down to a compact 900Ã—620 window.
+- switch between Claude Light, Midnight Ink, Sage Studio, High Contrast, and
+  the opt-in V1 Neo style with rounded controls and arrowless scrollbars;
+- adjust text from 85–140%, choose layout density, or reduce motion;
+- adapt from a full desktop workspace down to a compact 900×620 window.
 
 Useful keyboard shortcuts:
 
@@ -50,7 +63,7 @@ the development machine. For a new machine:
 
 ```powershell
 python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -e ".[hash,detect,documents,api,remote,vec,dev]"
+.\.venv\Scripts\python.exe -m pip install -e ".[hash,detect,documents,api,remote,vec,studio,dev]"
 ```
 
 `ffmpeg`/`ffprobe` improve video and audio extraction. ExifTool is optional;

@@ -17,6 +17,7 @@ from __future__ import annotations
 import logging
 import time
 import traceback
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -46,6 +47,7 @@ class BackfillResult:
     completed: int = 0
     failed: int = 0
     skipped: int = 0
+    retried: int = 0
     blocked_by_user: int = 0
     annotations_written: int = 0
     duration_s: float = 0.0
@@ -54,6 +56,7 @@ class BackfillResult:
     def as_dict(self) -> dict[str, Any]:
         return {
             "enqueued": self.enqueued,
+            "retried": self.retried,
             "completed": self.completed,
             "failed": self.failed,
             "skipped": self.skipped,
@@ -84,13 +87,30 @@ class PluginRunner:
 
     # ── enqueue ─────────────────────────────────────────────────────────────
 
-    def enqueue_backfill(self, plugins: list[LoadedPlugin], *, limit: int | None = None) -> int:
+    def enqueue_backfill(
+        self,
+        plugins: list[LoadedPlugin],
+        *,
+        limit: int | None = None,
+        media_types: Sequence[str] | None = None,
+    ) -> int:
         """One pending task per (matching asset × plugin version). Idempotent:
         the ``(asset, plugin, version)`` unique key makes re-enqueueing free,
-        which is why 'just run backfill again' is always a safe answer."""
+        which is why 'just run backfill again' is always a safe answer.
+
+        ``media_types`` narrows the sweep to a subset of what the plugin
+        accepts. An expensive analyzer that accepts everything is otherwise an
+        all-or-nothing commitment across the entire library, which is not a
+        choice most operators want to make from a single button.
+        """
         total = 0
+        wanted = {str(value) for value in media_types} if media_types else None
         for plugin in plugins:
             accepts = list(plugin.info.accepts)
+            if wanted is not None:
+                accepts = [value for value in accepts if value in wanted]
+                if not accepts:
+                    continue
             after_id = 0
             remaining = limit
             while True:
@@ -118,8 +138,16 @@ class PluginRunner:
         *,
         enqueue: bool = True,
         limit: int | None = None,
+        media_types: Sequence[str] | None = None,
+        retry_failed: bool = False,
     ) -> BackfillResult:
-        """Run the queue to empty for the given (or all enabled) plugins."""
+        """Run the queue to empty for the given (or all enabled) plugins.
+
+        ``retry_failed`` revives tasks that exhausted their attempts. Failures
+        caused by a stopped model server are permanent to the queue but
+        entirely transient in reality, so there has to be a way to say
+        "the thing I fixed is fixed" without rebuilding the library.
+        """
         started = time.monotonic()
         result = BackfillResult()
 
@@ -141,8 +169,14 @@ class PluginRunner:
             _LOG.info("no runnable plugins %s", f"among {plugin_ids}" if plugin_ids else "enabled")
             return result
 
+        if retry_failed:
+            result.retried = sum(
+                self.repos.tasks.reset_failed(plugin_id) for plugin_id in targets
+            )
         if enqueue:
-            result.enqueued = self.enqueue_backfill(list(targets.values()), limit=limit)
+            result.enqueued = self.enqueue_backfill(
+                list(targets.values()), limit=limit, media_types=media_types
+            )
 
         wanted = list(targets)
         while not self.cancel.cancelled:

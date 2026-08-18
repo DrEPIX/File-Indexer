@@ -250,6 +250,8 @@ class MediaEngineBackend:
             "before": "<", "after": ">",
         }
         if operator in binary:
+            if value is None and operator in {"eq", "neq"}:
+                return f"{expression} IS {'NOT ' if operator == 'neq' else ''}NULL"
             params.append(value)
             return f"{expression} {binary[operator]} ?"
         if operator in {"exists", "missing"}:
@@ -259,11 +261,18 @@ class MediaEngineBackend:
         if operator in {"contains", "starts_with", "ends_with", "under"}:
             text = str(value)
             escaped = text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            if operator == "under":
+                exact_root = text.rstrip("/\\")
+                root = escaped.rstrip("/\\")
+                params.extend([exact_root, f"{root}/%", f"{root}\\\\%"])
+                return (
+                    f"({expression} = ? OR {expression} LIKE ? ESCAPE '\\' "
+                    f"OR {expression} LIKE ? ESCAPE '\\')"
+                )
             pattern = {
                 "contains": f"%{escaped}%",
                 "starts_with": f"{escaped}%",
                 "ends_with": f"%{escaped}",
-                "under": f"{escaped.rstrip('/\\\\')}%",
             }[operator]
             params.append(pattern)
             return f"{expression} LIKE ? ESCAPE '\\'"
@@ -338,7 +347,10 @@ class MediaEngineBackend:
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
         if parsed.tzinfo is None:
             parsed = parsed.replace(tzinfo=timezone.utc)
-        return int(parsed.timestamp() * 1_000_000_000)
+        timestamp_ns = int(parsed.timestamp() * 1_000_000_000)
+        if not -(2**63) <= timestamp_ns <= 2**63 - 1:
+            raise QueryError("modified-date filter is outside the filesystem timestamp range")
+        return timestamp_ns
 
     @staticmethod
     def _sort_expression(field: str, has_text: bool) -> str:
@@ -362,8 +374,12 @@ class MediaEngineBackend:
         try:
             raw = base64.urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4))
             value = json.loads(raw.decode("utf-8"))
-            offset = int(value["offset"])
-            if offset < 0:
+            if not isinstance(value, dict) or set(value) != {"offset"}:
+                raise ValueError
+            offset = value["offset"]
+            if isinstance(offset, bool) or not isinstance(offset, int):
+                raise ValueError
+            if not 0 <= offset <= 2**63 - 1:
                 raise ValueError
             return offset
         except (

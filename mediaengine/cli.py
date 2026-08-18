@@ -32,6 +32,17 @@ __all__ = ["main", "build_parser"]
 Handler = Callable[[argparse.Namespace, "MediaEngine"], int]
 
 
+def _as_strings(value: object) -> list[str]:
+    """Coerce a loosely-typed describe() field into printable strings.
+
+    Registry rows are ``dict[str, object]`` by design — the core does not know
+    what a plugin puts in them — so the CLI narrows at the point of printing.
+    """
+    if isinstance(value, (list, tuple)):
+        return [str(item) for item in value]
+    return []
+
+
 def _print(payload: Any, *, as_json: bool) -> None:
     """Emit a result as JSON or as readable text."""
     if as_json:
@@ -311,16 +322,16 @@ def cmd_plugins(args: argparse.Namespace, engine: "MediaEngine") -> int:
         print(f"{row['plugin_id']:<28} v{row.get('version')}  {row.get('transport'):<11} {state}")
         if row.get("description"):
             print(f"    {row['description']}")
-        accepts = ",".join(row.get("accepts") or [])
-        emits = ",".join(row.get("emits") or [])
+        accepts = ",".join(_as_strings(row.get("accepts")))
+        emits = ",".join(_as_strings(row.get("emits")))
         print(f"    accepts: {accepts or '-'}   emits: {emits or '-'}")
-        tasks = row.get("tasks") or {}
-        if tasks:
-            summary = "  ".join(f"{state}={count}" for state, count in sorted(tasks.items()))
+        tasks = row.get("tasks")
+        if isinstance(tasks, dict) and tasks:
+            summary = "  ".join(f"{key}={value}" for key, value in sorted(tasks.items()))
             print(f"    tasks: {summary}")
         if row.get("load_error"):
             print(f"    LOAD ERROR: {row['load_error']}")
-        for note in row.get("notes") or []:
+        for note in _as_strings(row.get("notes")):
             print(f"    ! {note}")
     return 0
 
@@ -409,6 +420,76 @@ def cmd_purge(args: argparse.Namespace, engine: "MediaEngine") -> int:
         return 0
     print(f"unknown purge target: {args.what}", file=sys.stderr)
     return 2
+
+
+def cmd_storage(args: argparse.Namespace, engine: "MediaEngine") -> int:
+    """Show where the library is kept, or move it somewhere else."""
+    from .maintenance import describe_storage, plan_relocation, relocate_storage
+
+    if not args.move_to and not args.use:
+        usage = describe_storage(engine.config)
+        if args.json:
+            _print(usage.as_dict(), as_json=True)
+        else:
+            _print_mapping(
+                {
+                    "location": str(usage.home),
+                    "index": f"{usage.db_path.name} ({human_bytes(usage.db_bytes)})",
+                    "previews": f"{usage.derivatives_path} ({human_bytes(usage.derivatives_bytes)})",
+                    "total": human_bytes(usage.total_bytes),
+                    "free on volume": human_bytes(usage.free_bytes or 0),
+                    "config": str(usage.config_path or "<defaults>"),
+                }
+            )
+            if usage.temporary:
+                print(
+                    "\nwarning: this library sits in a temporary folder the OS may clear.",
+                    file=sys.stderr,
+                )
+        return 0
+
+    destination = args.move_to or args.use
+    mode = "move" if args.move_to else "adopt"
+    # Everything below rearranges files the database is sitting on, so the
+    # engine goes away first. Closing twice is harmless; main() does it again.
+    plan = plan_relocation(engine.config, destination, mode=mode)
+    if args.dry_run:
+        _print(plan.as_dict(), as_json=args.json)
+        return 0
+    engine.close()
+    report = relocate_storage(engine.config, destination, mode=mode)
+    _print(report.as_dict() if args.json else f"library now at {report.destination}", as_json=args.json)
+    return 0
+
+
+def cmd_reset(args: argparse.Namespace, engine: "MediaEngine") -> int:
+    """Delete the index, previews, logs and settings. Originals are untouched."""
+    from .maintenance import describe_storage, master_reset
+
+    usage = describe_storage(engine.config)
+    if not args.yes:
+        print(
+            "This deletes the entire index, every generated preview, the logs, and all\n"
+            f"settings — {human_bytes(usage.total_bytes)} under {usage.home}.\n"
+            "Tags, labels, people and scan history go with it and cannot be recovered.\n"
+            "Your original media files are not touched.\n\n"
+            "Re-run with --yes to confirm.",
+            file=sys.stderr,
+        )
+        return 2
+    engine.close()
+    report = master_reset(
+        engine.config,
+        delete_config=args.delete_config,
+        delete_filter_packs=args.delete_filter_packs,
+    )
+    if args.json:
+        _print(report.as_dict(), as_json=True)
+    else:
+        print(f"removed {len(report.removed)} item(s), freeing {human_bytes(report.bytes_freed)}")
+        for path, reason in report.skipped:
+            print(f"kept {path}: {reason}", file=sys.stderr)
+    return 0
 
 
 def cmd_optimize(args: argparse.Namespace, engine: "MediaEngine") -> int:
@@ -519,6 +600,29 @@ def build_parser() -> argparse.ArgumentParser:
     optimize = sub.add_parser("optimize", help="compact indexes")
     optimize.add_argument("--vacuum", action="store_true", help="also rewrite the database file")
     optimize.set_defaults(handler=cmd_optimize)
+
+    storage = sub.add_parser("storage", help="where the index lives, and how to move it")
+    where = storage.add_mutually_exclusive_group()
+    where.add_argument(
+        "--move-to", metavar="DIR", help="move the index, previews and log into DIR"
+    )
+    where.add_argument(
+        "--use", metavar="DIR", help="switch to the library already stored in DIR, moving nothing"
+    )
+    storage.add_argument(
+        "--dry-run", action="store_true", help="print what would move, and stop"
+    )
+    storage.set_defaults(handler=cmd_storage)
+
+    reset = sub.add_parser("reset", help="erase the index, previews, logs and settings")
+    reset.add_argument("--yes", action="store_true", help="confirm; without it nothing happens")
+    reset.add_argument(
+        "--delete-config", action="store_true", help="remove config.yaml instead of resetting it"
+    )
+    reset.add_argument(
+        "--delete-filter-packs", action="store_true", help="also delete filter packs you wrote"
+    )
+    reset.set_defaults(handler=cmd_reset)
 
     return parser
 

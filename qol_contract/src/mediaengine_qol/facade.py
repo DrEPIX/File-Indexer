@@ -55,12 +55,15 @@ class QoLService:
     def asset(self, asset_id: int) -> Mapping[str, Any] | None:
         """Fetch an asset without exposing repository objects."""
 
-        if asset_id < 1:
-            raise ValueError("asset_id must be positive")
+        if isinstance(asset_id, bool) or not isinstance(asset_id, int) or asset_id < 1:
+            raise ValueError("asset_id must be a positive integer")
         return self.backend.get_asset(asset_id)
 
     def facets(self, namespace: str | None = None) -> Mapping[str, Any]:
         """Fetch all facets or one dynamic annotation namespace."""
 
+        if namespace is not None:
+            if not isinstance(namespace, str) or not namespace.strip():
+                raise ValueError("namespace must be a non-empty string or null")
+            namespace = namespace.strip()
         return self.backend.list_facets(namespace)
-

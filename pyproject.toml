@@ -40,6 +40,8 @@ api = ["fastapi>=0.110", "uvicorn[standard]>=0.29", "websockets>=12.0", "python-
 remote = ["httpx>=0.27"]
 # Accelerated vector search. Falls back to NumPy brute force.
 vec = ["sqlite-vec>=0.1.1"]
+# Modern Qt desktop frontend. The classic Tk V1 remains dependency-free.
+studio = ["PySide6>=6.7,<7"]
 dev = [
   "pytest>=8.0",
   "pytest-asyncio>=0.23",
@@ -56,6 +58,7 @@ mediaengine = "mediaengine.cli:main"
 
 [project.gui-scripts]
 mediaengine-v1 = "mediaengine.gui:main"
+mediaengine-studio = "mediaengine.studio:main"
 
 # Built-in analyzers are registered through the same entry-point group that
 # third-party plugins use. There is no privileged path into the registry.
@@ -71,7 +74,7 @@ where = [".", "qol_contract/src"]
 include = ["mediaengine*", "mediaengine_qol*"]
 
 [tool.setuptools.package-data]
-mediaengine = ["db/migrations/*.sql", "py.typed"]
+mediaengine = ["db/migrations/*.sql", "filters/builtin/*.toml", "py.typed"]
 mediaengine_qol = ["py.typed"]
 
 [tool.setuptools.data-files]
@@ -84,7 +87,10 @@ warn_unreachable = true
 disallow_any_generics = true
 namespace_packages = true
 explicit_package_bases = true
-exclude = ['^examples/', '^build/']
+exclude = ['^examples/', '^build/', '^stubs/']
+# `stubs/` shadows NumPy's own stubs, which use Python 3.12 syntax that mypy
+# cannot parse under a 3.11 target. See stubs/numpy/__init__.pyi.
+mypy_path = "stubs:qol_contract/src"
 
 [[tool.mypy.overrides]]
 # Third-party packages without bundled type information.
@@ -95,12 +101,28 @@ module = [
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
-# numpy 2.x ships stubs using PEP 695 `type` statements, which mypy refuses to
-# parse under python_version = 3.11 even though they are fine at runtime.
-# Skipping the stubs keeps strict checking of our own code on a 3.11 target.
-module = ["numpy", "numpy.*"]
-follow_imports = "skip"
-ignore_missing_imports = true
+# These modules are written to type-check on every supported platform and with
+# every optional dependency present or absent. Their `type: ignore` comments
+# are therefore correct but *conditionally* redundant: `subprocess.CREATE_NO_WINDOW`
+# resolves on Windows and not on Linux, PyMuPDF's stubs exist only when PyMuPDF
+# is installed. Flagging those as unused would push a developer to delete an
+# ignore that the next platform needs.
+module = [
+  "mediaengine.core.procs",
+  "mediaengine.core.walker",
+  "mediaengine.core.derivatives",
+  "mediaengine.core.extractors.documents",
+  "mediaengine.db.connection",
+  "mediaengine.plugins.contract",
+]
+warn_unused_ignores = false
+
+[[tool.mypy.overrides]]
+# PyMuPDF ships partially annotated stubs whose constructors are untyped. The
+# call sites are guarded and their results are validated; refusing to call them
+# is not an option and wrapping each one adds noise, not safety.
+module = ["mediaengine.core.derivatives", "mediaengine.core.extractors.documents"]
+disallow_untyped_calls = false
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

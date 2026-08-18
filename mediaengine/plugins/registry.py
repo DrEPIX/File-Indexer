@@ -18,7 +18,7 @@ import tomllib
 from dataclasses import dataclass, field
 from importlib.metadata import entry_points
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ..config import Config
 from ..db.repositories import Repositories
@@ -26,6 +26,9 @@ from ..errors import PluginLoadError, PluginUnavailable
 from ..util import stable_hash
 from .contract import Analyzer, PluginInfo
 from .http import HttpAnalyzer, plugin_info_from_manifest
+
+if TYPE_CHECKING:
+    from ..filters import FilterPack
 
 __all__ = ["LoadedPlugin", "PluginRegistry"]
 
@@ -58,6 +61,11 @@ class PluginRegistry:
         self.repos = repos
         self._plugins: dict[str, LoadedPlugin] = {}
         self._discovered = False
+        #: Filter packs found during the last discovery, by pack id.
+        self.packs: dict[str, "FilterPack"] = {}
+        #: Pack files that failed to parse, keyed by path — surfaced in the UI
+        #: so a typo in a user's TOML is visible rather than silently ignored.
+        self.pack_errors: dict[str, str] = {}
 
     # ── discovery ───────────────────────────────────────────────────────────
 
@@ -73,6 +81,11 @@ class PluginRegistry:
             plugin = self._load_entry(entry.name, entry)
             if plugin is not None:
                 found[plugin.info.id] = plugin
+
+        for plugin in self._load_filter_packs():
+            # An entry-point analyzer wins a name collision: a pack cannot
+            # impersonate installed code.
+            found.setdefault(plugin.info.id, plugin)
 
         if self.config.plugins.allow_remote_plugins:
             for path in self._manifest_paths():
@@ -98,6 +111,45 @@ class PluginRegistry:
         self._persist()
         self._discovered = True
         return dict(self._plugins)
+
+    def _load_filter_packs(self) -> list[LoadedPlugin]:
+        """Turn every discovered filter pack into an analyzer.
+
+        Packs are data, so a broken one is a user-authored TOML error rather
+        than a code fault; it is recorded as a load error against its own id so
+        the store can show *which* pack is wrong and why.
+        """
+        from ..filters import FilterPackAnalyzer, discover_packs
+
+        discovery = discover_packs(self.config)
+        self.pack_errors = dict(discovery.errors)
+        self.packs = {pack.id: pack for pack in discovery.packs.values()}
+        out: list[LoadedPlugin] = []
+        for pack in discovery.sorted_packs():
+            try:
+                analyzer = FilterPackAnalyzer(pack)
+            except Exception as exc:  # noqa: BLE001 - one bad pack must not hide the rest
+                _LOG.warning("filter pack %s failed to build: %s", pack.id, exc)
+                out.append(
+                    LoadedPlugin(
+                        info=PluginInfo(id=pack.id, version="0", accepts=("other",)),
+                        analyzer=None,
+                        enabled=False,
+                        load_error=str(exc),
+                    )
+                )
+                continue
+            plugin_config = self.config.plugin_config(pack.id)
+            loaded = LoadedPlugin(
+                info=analyzer.info,
+                analyzer=analyzer,
+                enabled=self.config.plugins.is_enabled(pack.id),
+                config_hash=stable_hash(plugin_config) if plugin_config else "",
+                notes=[f"filter pack: {pack.source}" if pack.source else "filter pack"],
+            )
+            self._gate_capabilities(loaded)
+            out.append(loaded)
+        return out
 
     def _manifest_paths(self) -> list[Path]:
         """Find manifests at a configured root or one directory below it."""

@@ -1,4 +1,7 @@
-param([switch]$Clean)
+param(
+    [switch]$Clean,
+    [switch]$OneFile
+)
 
 $ErrorActionPreference = "Stop"
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
@@ -13,9 +16,10 @@ if ($LASTEXITCODE -ne 0) {
     throw "PyInstaller is not installed. Run: .\.venv\Scripts\python.exe -m pip install pyinstaller"
 }
 
-# Use a release channel directory so an antivirus scan or a running prior
-# build cannot lock the next COLLECT target in place.
-$DistPath = Join-Path $ProjectRoot "dist\release"
+# Keep the installed onedir payload and portable single executable in separate
+# release channels so either can be rebuilt without clobbering the other.
+$DistChannel = if ($OneFile) { "dist\portable" } else { "dist\release" }
+$DistPath = Join-Path $ProjectRoot $DistChannel
 
 $Arguments = @(
     "-m", "PyInstaller",
@@ -56,6 +60,9 @@ foreach ($PluginFile in $PluginFiles) {
 if ($Clean) {
     $Arguments += "--clean"
 }
+if ($OneFile) {
+    $Arguments += "--onefile"
+}
 $Arguments += (Join-Path $ProjectRoot "File Indexer V1.pyw")
 
 & $Python @Arguments
@@ -63,5 +70,9 @@ if ($LASTEXITCODE -ne 0) {
     throw "V1 packaging failed with exit code $LASTEXITCODE"
 }
 
-$Executable = Join-Path $DistPath "File Indexer V1\File Indexer V1.exe"
+$Executable = if ($OneFile) {
+    Join-Path $DistPath "File Indexer V1.exe"
+} else {
+    Join-Path $DistPath "File Indexer V1\File Indexer V1.exe"
+}
 Write-Host "Built: $Executable"

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import tomllib
+from copy import deepcopy
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Iterable, Mapping, cast
@@ -25,7 +26,7 @@ class SurfaceRegistry:
         self.filters = self._unique(filters, "key")
         self.sorts = self._unique(sorts, "key")
         self.operations = self._unique(operations, "operation_id")
-        self.settings = dict(settings or {})
+        self.settings = deepcopy(dict(settings or {}))
         self._aliases = self._build_aliases()
         self._validate_defaults()
 
@@ -50,18 +51,21 @@ class SurfaceRegistry:
 
     def _validate_defaults(self) -> None:
         search = self.settings.get("search", {})
-        default_sort = search.get("default_sort") if isinstance(search, Mapping) else None
-        if default_sort and default_sort not in self.sorts:
+        if not isinstance(search, Mapping):
+            raise SheetError("search settings must be a table")
+        default_sort = search.get("default_sort", "captured")
+        if not isinstance(default_sort, str) or default_sort not in self.sorts:
             raise SheetError(f"default_sort references unknown sort {default_sort!r}")
-        default_page_size = search.get("default_page_size", 100) if isinstance(search, Mapping) else 100
-        max_page_size = search.get("max_page_size", 500) if isinstance(search, Mapping) else 500
-        max_boolean_depth = search.get("max_boolean_depth", 12) if isinstance(search, Mapping) else 12
-        try:
-            default_page_size = int(default_page_size)
-            max_page_size = int(max_page_size)
-            max_boolean_depth = int(max_boolean_depth)
-        except (TypeError, ValueError) as exc:
-            raise SheetError("search size and depth settings must be integers") from exc
+        if not self.sorts[default_sort].enabled:
+            raise SheetError(f"default_sort references disabled sort {default_sort!r}")
+        default_page_size = search.get("default_page_size", 100)
+        max_page_size = search.get("max_page_size", 500)
+        max_boolean_depth = search.get("max_boolean_depth", 12)
+        if any(
+            isinstance(value, bool) or not isinstance(value, int)
+            for value in (default_page_size, max_page_size, max_boolean_depth)
+        ):
+            raise SheetError("search size and depth settings must be integers")
         if not 1 <= default_page_size <= max_page_size:
             raise SheetError("default_page_size must be between 1 and max_page_size")
         if not 0 <= max_boolean_depth <= 64:
@@ -81,7 +85,7 @@ class SurfaceRegistry:
 
         return {
             "version": 1,
-            "settings": self.settings,
+            "settings": deepcopy(self.settings),
             "filters": [asdict(value) for value in self.filters.values() if value.enabled],
             "sorts": [asdict(value) for value in self.sorts.values() if value.enabled],
             "operations": [asdict(value) for value in self.operations.values() if value.enabled],
@@ -112,6 +116,30 @@ class SurfaceRegistry:
         return value
 
     @staticmethod
+    def _strings(
+        data: Mapping[str, Any],
+        key: str,
+        default: list[str] | None = None,
+    ) -> tuple[str, ...]:
+        """Read a TOML string array without treating one string as characters."""
+
+        value = data.get(key, default)
+        if not isinstance(value, list) or any(
+            not isinstance(item, str) or not item.strip() for item in value
+        ):
+            raise SheetError(f"{key} must be an array of non-empty strings")
+        return tuple(value)
+
+    @staticmethod
+    def _boolean(data: Mapping[str, Any], key: str, default: bool) -> bool:
+        """Read a real TOML boolean rather than applying Python truthiness."""
+
+        value = data.get(key, default)
+        if not isinstance(value, bool):
+            raise SheetError(f"{key} must be a boolean")
+        return value
+
+    @staticmethod
     def _parse_filter(data: Mapping[str, Any]) -> FilterDefinition:
         try:
             return FilterDefinition(
@@ -119,18 +147,18 @@ class SurfaceRegistry:
                 label=str(data["label"]),
                 field=str(data["field"]),
                 value_type=ValueType(str(data["type"])),
-                operators=tuple(str(value) for value in data["operators"]),
+                operators=SurfaceRegistry._strings(data, "operators"),
                 group=str(data.get("group", "General")),
                 description=str(data.get("description", "")),
                 widget=str(data.get("widget", "auto")),
-                facet=bool(data.get("facet", False)),
-                multiple=bool(data.get("multiple", False)),
-                nullable=bool(data.get("nullable", False)),
+                facet=SurfaceRegistry._boolean(data, "facet", False),
+                multiple=SurfaceRegistry._boolean(data, "multiple", False),
+                nullable=SurfaceRegistry._boolean(data, "nullable", False),
                 unit=str(data["unit"]) if data.get("unit") is not None else None,
-                choices=tuple(str(value) for value in data.get("choices", [])),
-                aliases=tuple(str(value) for value in data.get("aliases", [])),
+                choices=SurfaceRegistry._strings(data, "choices", []),
+                aliases=SurfaceRegistry._strings(data, "aliases", []),
                 capability=str(data.get("capability", "structured")),
-                enabled=bool(data.get("enabled", True)),
+                enabled=SurfaceRegistry._boolean(data, "enabled", True),
             )
         except (KeyError, TypeError, ValueError) as exc:
             raise SheetError(f"invalid filter declaration: {data!r}: {exc}") from exc
@@ -142,9 +170,9 @@ class SurfaceRegistry:
                 key=str(data["key"]),
                 label=str(data["label"]),
                 field=str(data["field"]),
-                directions=tuple(str(value) for value in data.get("directions", ["asc", "desc"])),
+                directions=SurfaceRegistry._strings(data, "directions", ["asc", "desc"]),
                 default_direction=str(data.get("default_direction", "desc")),
-                enabled=bool(data.get("enabled", True)),
+                enabled=SurfaceRegistry._boolean(data, "enabled", True),
             )
         except (KeyError, TypeError, ValueError) as exc:
             raise SheetError(f"invalid sort declaration: {data!r}: {exc}") from exc
@@ -158,7 +186,7 @@ class SurfaceRegistry:
                 path=str(data["path"]),
                 summary=str(data["summary"]),
                 capability=str(data.get("capability", "core")),
-                enabled=bool(data.get("enabled", True)),
+                enabled=SurfaceRegistry._boolean(data, "enabled", True),
             )
         except (KeyError, TypeError, ValueError) as exc:
             raise SheetError(f"invalid operation declaration: {data!r}: {exc}") from exc

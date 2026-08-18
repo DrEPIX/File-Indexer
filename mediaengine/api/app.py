@@ -233,7 +233,7 @@ def create_app(
 
     @app.get("/api/health")
     def health() -> dict[str, Any]:
-        return cast(dict[str, Any], runtime.health())
+        return runtime.health()
 
     @app.get("/api/surface", dependencies=protected)
     def surface() -> Any:
@@ -515,6 +515,120 @@ def create_app(
     @app.delete("/api/biometrics", dependencies=protected)
     def purge_biometrics() -> Any:
         return runtime.purge_biometrics()
+
+    @app.post("/api/people/cluster", dependencies=protected)
+    def cluster_people(payload: dict[str, Any] | None = None) -> Any:
+        values = payload or {}
+        try:
+            return runtime.cluster_faces(
+                threshold=float(values.get("threshold", 0.72)),
+                min_cluster_size=int(values.get("min_cluster_size", 2)),
+                limit_per_model=int(values.get("limit_per_model", 250_000)),
+            )
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.get("/api/people/suggestions", dependencies=protected)
+    def people_suggestions(limit: int = 200) -> Any:
+        return runtime.face_cluster_suggestions(limit=limit)
+
+    @app.get("/api/people/suggestions/{cluster_id}/regions", dependencies=protected)
+    def people_suggestion_regions(cluster_id: int, limit: int = 500) -> Any:
+        return runtime.face_cluster_regions(cluster_id, limit=limit)
+
+    @app.post("/api/people/suggestions/{cluster_id}/name", dependencies=protected)
+    def name_people_suggestion(cluster_id: int, payload: dict[str, Any]) -> Any:
+        from ..errors import NotFoundError
+
+        try:
+            return runtime.name_face_cluster(cluster_id, str(payload.get("display_name") or ""))
+        except NotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.get("/api/identities", dependencies=protected)
+    def identities() -> Any:
+        return runtime.repos.identities.list_identities()
+
+    @app.get("/api/identities/{identity_id}", dependencies=protected)
+    def identity_detail(identity_id: int) -> Any:
+        identity = runtime.repos.identities.get_identity(identity_id)
+        if identity is None:
+            raise HTTPException(status_code=404, detail="identity not found")
+        return {
+            **identity,
+            "profiles": runtime.identity_profiles(identity_id),
+            "biographies": runtime.identity_biographies(identity_id),
+        }
+
+    @app.get("/api/profile-providers", dependencies=protected)
+    def profile_providers() -> Any:
+        return runtime.profile_providers()
+
+    @app.post("/api/identities/{identity_id}/profiles", dependencies=protected, status_code=201)
+    def link_identity_profile(identity_id: int, payload: dict[str, Any]) -> Any:
+        from ..errors import NotFoundError
+
+        try:
+            return runtime.link_identity_profile(
+                identity_id,
+                provider=str(payload.get("provider") or ""),
+                handle=str(payload["handle"]) if payload.get("handle") else None,
+                profile_url=str(payload["profile_url"]) if payload.get("profile_url") else None,
+                display_label=str(payload["display_label"])
+                if payload.get("display_label")
+                else None,
+                metadata=payload.get("metadata") if isinstance(payload.get("metadata"), dict) else None,
+            )
+        except NotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.delete("/api/identities/{identity_id}/profiles/{profile_id}", dependencies=protected)
+    def unlink_identity_profile(identity_id: int, profile_id: int) -> Any:
+        if not runtime.unlink_identity_profile(identity_id, profile_id):
+            raise HTTPException(status_code=404, detail="profile link not found")
+        return {"identity_id": identity_id, "profile_id": profile_id, "deleted": True}
+
+    @app.get("/api/identities/{identity_id}/wikipedia/search", dependencies=protected)
+    def search_identity_wikipedia(identity_id: int, language: str = "en", limit: int = 5) -> Any:
+        from ..errors import CapabilityDenied, NotFoundError
+
+        try:
+            return runtime.search_wikipedia_for_identity(
+                identity_id, language=language, limit=limit
+            )
+        except NotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except CapabilityDenied as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except (OSError, ValueError) as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    @app.put("/api/identities/{identity_id}/wikipedia", dependencies=protected)
+    def attach_identity_wikipedia(identity_id: int, payload: dict[str, Any]) -> Any:
+        from ..errors import CapabilityDenied, NotFoundError
+
+        try:
+            return runtime.attach_wikipedia_biography(
+                identity_id,
+                str(payload.get("page_title") or ""),
+                language=str(payload.get("language") or "en"),
+            )
+        except NotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except CapabilityDenied as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except (OSError, ValueError) as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    @app.delete("/api/identities/{identity_id}/wikipedia", dependencies=protected)
+    def delete_identity_wikipedia(identity_id: int, language: str = "en") -> Any:
+        if not runtime.delete_identity_biography(identity_id, language=language):
+            raise HTTPException(status_code=404, detail="biography not found")
+        return {"identity_id": identity_id, "provider": "wikipedia", "deleted": True}
 
     @app.get("/api/face-reference-packs", dependencies=protected)
     def face_reference_packs() -> Any:

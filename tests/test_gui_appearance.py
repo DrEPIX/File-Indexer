@@ -23,6 +23,14 @@ def test_theme_text_colors_meet_wcag_aa() -> None:
         assert contrast_ratio(theme.header_text, theme.header_start) >= 4.5, theme.name
 
 
+def test_v1_neo_is_additive_and_opt_in() -> None:
+    assert THEMES["V1 Neo"].chrome == "neo"
+    assert all(
+        THEMES[name].chrome == "classic"
+        for name in ("Claude Light", "Midnight Ink", "Sage Studio", "High Contrast")
+    )
+
+
 def test_color_interpolation_is_stable() -> None:
     assert mix_color("#000000", "#ffffff", 0.0) == "#000000"
     assert mix_color("#000000", "#ffffff", 1.0) == "#ffffff"

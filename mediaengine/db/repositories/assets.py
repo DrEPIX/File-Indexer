@@ -393,6 +393,31 @@ class AssetRepository(Repository):
             label="delete_file",
         )
 
+    def delete_files_under(
+        self, root: str, *, conn: sqlite3.Connection | None = None
+    ) -> tuple[list[int], int]:
+        """Remove indexed file locations beneath one explicitly removed root.
+
+        Returns the affected asset ids so the caller can garbage-collect only
+        assets that no longer have another location. Original files are never
+        touched. LIKE metacharacters are escaped because valid Windows folder
+        names may contain ``%`` or ``_``.
+        """
+        normalized = str(Path(root).resolve()).rstrip("/\\")
+        prefix = normalized + os.sep
+        escaped = prefix.replace("!", "!!").replace("%", "!%").replace("_", "!_") + "%"
+
+        def _op(c: sqlite3.Connection) -> tuple[list[int], int]:
+            rows = c.execute(
+                "SELECT DISTINCT asset_id FROM files WHERE path LIKE ? ESCAPE '!'",
+                (escaped,),
+            ).fetchall()
+            asset_ids = [int(row["asset_id"]) for row in rows]
+            cursor = c.execute("DELETE FROM files WHERE path LIKE ? ESCAPE '!'", (escaped,))
+            return asset_ids, int(cursor.rowcount)
+
+        return self._write(_op, conn, label="delete_files_under")
+
     def orphaned_asset_ids(self, limit: int = 1000) -> list[int]:
         """Assets with no ``present`` file. Candidates for garbage collection."""
         rows = self._query(

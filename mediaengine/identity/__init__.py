@@ -1,5 +1,11 @@
-"""Local biometric matching services."""
+"""Local biometric clustering and matching services."""
 
+from .clustering import FaceClusterer, FaceClusterResult
 from .references import FaceReferenceMatcher, FaceReferenceMatchResult
 
-__all__ = ["FaceReferenceMatcher", "FaceReferenceMatchResult"]
+__all__ = [
+    "FaceClusterer",
+    "FaceClusterResult",
+    "FaceReferenceMatcher",
+    "FaceReferenceMatchResult",
+]

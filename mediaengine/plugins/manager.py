@@ -13,8 +13,13 @@ from urllib.parse import urlparse
 
 from ..config import RemotePluginConfig, save_config
 from ..errors import ConfigError, PluginLoadError
+from .builtin.lm_studio import DEFAULT_FRAME_COUNT
 from .contract import PluginInfo
 from .http import HttpAnalyzer, plugin_info_from_manifest
+from .models import ModelLibrary
+
+#: The one analyzer whose behaviour depends on a separately-installed model.
+LM_STUDIO_ID = "local.lm-studio"
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,9 +56,13 @@ def endpoint_is_local(base_url: str) -> bool:
 class PluginManager:
     """Safely mutate plugin configuration and refresh one running engine."""
 
-    def __init__(self, engine: Any) -> None:
+    def __init__(self, engine: Any, *, models: ModelLibrary | None = None) -> None:
         self.engine = engine
         self.config = engine.config
+        self.models = models or ModelLibrary(
+            base_url=str(self.config.plugin_config(LM_STUDIO_ID).get("base_url") or "")
+            or "http://127.0.0.1:1234"
+        )
 
     def catalog(self) -> list[dict[str, object]]:
         """Return discovered plugins plus operator-facing installation state."""
@@ -62,14 +71,199 @@ class PluginManager:
         for row in rows:
             plugin_id = str(row.get("plugin_id") or "")
             row["registered_remote"] = plugin_id in self.config.plugins.remote
-            row["configurable"] = plugin_id in self.config.plugins.per_plugin or plugin_id == "local.lm-studio"
+            row["configurable"] = plugin_id in self.config.plugins.per_plugin or plugin_id == LM_STUDIO_ID
             row["kind"] = self._kind(row)
+            if plugin_id == LM_STUDIO_ID:
+                settings = self.config.plugin_config(LM_STUDIO_ID)
+                row["model"] = str(settings.get("model") or "")
+                row["sees_pixels"] = bool(settings.get("send_image", True))
         return rows
+
+    def filter_packs(self) -> dict[str, Any]:
+        """Installed taxonomies, their enablement, and their queue state.
+
+        A pack is an analyzer, so everything the analyzer view already knows
+        about it — enabled, versions, done/failed/pending — is merged in rather
+        than recomputed, and the two screens can never disagree.
+        """
+        rows = {str(row.get("plugin_id") or ""): row for row in self.engine.plugins.describe()}
+        packs: list[dict[str, Any]] = []
+        for pack in sorted(
+            self.engine.plugins.packs.values(), key=lambda item: (not item.builtin, item.name)
+        ):
+            row = rows.get(pack.id, {})
+            packs.append(
+                {
+                    "pack_id": pack.id,
+                    "plugin_id": pack.id,
+                    "name": pack.name,
+                    "facet": pack.facet_title,
+                    "namespace": pack.namespace,
+                    "method": pack.method,
+                    "description": pack.description,
+                    "version": pack.version,
+                    "accepts": list(pack.accepts),
+                    "builtin": pack.builtin,
+                    "source": pack.source,
+                    "needs_model": pack.method in {"vision", "text"},
+                    "multi_label": pack.multi_label,
+                    "labels": [
+                        {"name": label.name, "display": label.title, "hint": label.hint}
+                        for label in pack.labels
+                    ],
+                    "enabled": bool(row.get("enabled")),
+                    "load_error": row.get("load_error"),
+                    "tasks": row.get("tasks") or {},
+                }
+            )
+        return {
+            "packs": packs,
+            "errors": dict(self.engine.plugins.pack_errors),
+            "directory": str(self._pack_dir()),
+        }
+
+    def _pack_dir(self) -> Any:
+        from ..filters import user_pack_dir
+
+        return user_pack_dir(self.config)
+
+    def install_filter_pack(
+        self, source: str | Any, *, overwrite: bool = False, enable: bool = False
+    ) -> dict[str, Any]:
+        """Add a taxonomy from a ``*.toml`` file and make it visible at once.
+
+        Installing is not enabling. A pack that started analyzing the library
+        the moment it was added would spend a user's GPU on a decision they
+        have not made yet, so ``enable`` is opt-in and defaults off.
+        """
+        from ..filters import install_pack
+
+        pack = install_pack(self.config, source, overwrite=overwrite)
+        self.engine.reload_plugins()
+        if enable:
+            self.set_enabled(pack.id, True)
+        return {
+            "pack_id": pack.id,
+            "name": pack.name,
+            "namespace": pack.namespace,
+            "method": pack.method,
+            "labels": len(pack.labels),
+            "enabled": self.config.plugins.is_enabled(pack.id),
+            "source": str(pack.source),
+        }
+
+    def remove_filter_pack(self, pack_id: str) -> dict[str, Any]:
+        """Delete a user-installed taxonomy and stop referring to it.
+
+        The annotations it produced are left alone. Removing a pack is not a
+        purge: the claims stay in the database with their provenance intact,
+        and reinstalling the same pack picks them back up rather than
+        re-analyzing a library from scratch.
+        """
+        from ..filters import remove_pack
+
+        pack = self.engine.plugins.packs.get(pack_id)
+        if pack is not None and pack.builtin:
+            raise ConfigError(
+                f"{pack_id} ships with the application and cannot be deleted; turn it off instead"
+            )
+        removed = remove_pack(self.config, pack_id)
+        if removed is None:
+            raise ConfigError(f"no installed filter pack with id {pack_id}")
+        self.config.plugins.enabled = [
+            value for value in self.config.plugins.enabled if value != pack_id
+        ]
+        self.config.plugins.disabled = [
+            value for value in self.config.plugins.disabled if value != pack_id
+        ]
+        self.config.plugins.per_plugin.pop(pack_id, None)
+        self._persist()
+        self.engine.reload_plugins()
+        return {"pack_id": pack_id, "removed": str(removed)}
+
+    def facet_groups(self) -> list[dict[str, Any]]:
+        """Facet values for every enabled pack, for the browse sidebar.
+
+        Only enabled packs appear: offering a filter that cannot match
+        anything because its analyzer has never run is worse than offering no
+        filter at all.
+        """
+        groups: list[dict[str, Any]] = []
+        for pack in self.engine.plugins.packs.values():
+            if not self.config.plugins.is_enabled(pack.id) or not pack.facetable:
+                continue
+            counts = {
+                str(row["label"]): int(row["count"])
+                for row in self.engine.repos.annotations.facet(pack.namespace, limit=64)
+            }
+            values = [
+                {
+                    "label": label.name,
+                    "display": label.title,
+                    "count": counts.get(label.name, 0),
+                    "query": f"{pack.namespace}:{label.name}",
+                }
+                for label in pack.labels
+                if counts.get(label.name, 0)
+            ]
+            if values:
+                groups.append(
+                    {
+                        "pack_id": pack.id,
+                        "title": pack.facet_title,
+                        "namespace": pack.namespace,
+                        "values": sorted(values, key=lambda item: -int(item["count"])),
+                    }
+                )
+        return groups
+
+    def model_store(self, *, vision_only: bool = False) -> dict[str, Any]:
+        """Everything the Model Store tab renders, in one background call."""
+
+        return {
+            "cli_available": self.models.cli_available,
+            "served": self.models.served_ids(),
+            "configured": str(self.config.plugin_config(LM_STUDIO_ID).get("model") or ""),
+            "models": self.models.store(vision_only=vision_only),
+        }
+
+    def use_model_for_tagging(self, key: str, *, vision: bool) -> dict[str, Any]:
+        """Point every model-backed analyzer at ``key``, in one step.
+
+        Choosing a model in a store and then separately configuring each
+        analyzer to use it is several steps too many; the store's promise is
+        that picking a model is the same act as adopting it. Filter packs are
+        included because a pack left pointing at "whatever loaded first" will
+        quietly get a text model and fail on every video.
+        """
+        settings = dict(self.config.plugin_config(LM_STUDIO_ID))
+        settings.update(
+            {
+                "model": key,
+                "send_image": vision,
+                "structured_output": True,
+                "frame_count": int(settings.get("frame_count", DEFAULT_FRAME_COUNT)),
+            }
+        )
+        settings.setdefault("base_url", "http://127.0.0.1:1234")
+        self.configure(LM_STUDIO_ID, settings)
+        self.set_enabled(LM_STUDIO_ID, True, grant_network=True)
+
+        updated = [LM_STUDIO_ID]
+        for pack in self.engine.plugins.packs.values():
+            if pack.method not in {"vision", "text"}:
+                continue
+            pack_settings = dict(self.config.plugin_config(pack.id))
+            pack_settings["model"] = key
+            pack_settings.setdefault("base_url", settings["base_url"])
+            self.configure(pack.id, pack_settings)
+            updated.append(pack.id)
+        return {"plugin_id": LM_STUDIO_ID, "model": key, "vision": vision, "updated": updated}
 
     @staticmethod
     def _kind(row: dict[str, object]) -> str:
         plugin_id = str(row.get("plugin_id") or "")
-        if plugin_id == "local.lm-studio":
+        if plugin_id == LM_STUDIO_ID:
             return "Local LLM"
         if row.get("transport") == "http":
             return "Remote API"

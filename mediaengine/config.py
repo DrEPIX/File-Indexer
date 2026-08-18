@@ -203,6 +203,10 @@ class PluginsConfig(BaseModel):
     directories: list[Path] = Field(
         default_factory=list, description="Extra directories scanned for plugin.toml manifests."
     )
+    filter_pack_dirs: list[Path] = Field(
+        default_factory=list,
+        description="Extra directories scanned for *.toml filter-pack taxonomies.",
+    )
     allow_network: bool = Field(
         default=False, description="Global gate for the `network` capability."
     )

@@ -12,10 +12,16 @@ from .contract import PROTOCOL, Analyzer, Annotation, PluginInfo, Region, valida
 from .context import AnalysisContext
 from .http import HttpAnalyzer, plugin_info_from_manifest
 from .manager import PluginManager, RegistrationResult, endpoint_is_local
+from .models import CATALOG, CatalogEntry, InstalledModel, ModelLibrary, find_lms_cli
 from .registry import LoadedPlugin, PluginRegistry
 from .runner import BackfillResult, PluginRunner
 
 __all__ = [
+    "CATALOG",
+    "CatalogEntry",
+    "InstalledModel",
+    "ModelLibrary",
+    "find_lms_cli",
     "PROTOCOL",
     "Annotation",
     "Region",

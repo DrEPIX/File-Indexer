@@ -1,15 +1,16 @@
 # MediaEngine QoL Contract
 
 This is an isolated, framework-neutral contract layer. It does not own scanning,
-SQLite, extraction, or plugin execution, and it does not import the future
-`mediaengine` package. Claude can build those internals without merge overlap.
+SQLite, extraction, or plugin execution. The planner remains independent of the
+core, while `MediaEngineBackend` is the narrow, allowlisted adapter used by the
+running HTTP service.
 
 Its job is to keep UI/API improvement work declarative:
 
 - `change_sheet.toml` is the only file a low-context agent normally edits.
 - `SurfaceRegistry` turns the sheet into a self-describing UI manifest.
 - `SearchRequest` and `QueryPlanner` validate recursive boolean filters.
-- `BackendPort` is the narrow adapter the core implements later.
+- `BackendPort` keeps callers independent of the concrete engine adapter.
 - `QoLService` exposes the same behavior to an in-process GUI or HTTP routes.
 - JSON Schema export lets forms, SDKs, and smaller models discover valid keys.
 
@@ -49,16 +50,31 @@ source tree, and includes the core, QoL, analyzer, and authoring-tool tests in
 one run. Use `-Quick` to skip bytecode compilation, `-Smoke` to exercise a
 disposable mixed-media library end to end, or `-FullTypeCheck` when the full
 application's optional dependency stubs are installed and compatible with the
-configured Python target.
+configured Python target. After building the Windows release, add
+`-PackagedApp` to launch the frozen GUI twice against isolated LocalAppData and
+verify recovery plus SQLite integrity.
+
+For a heavier duplicate-publication stress check, run
+`.\scripts\smoke_backend.ps1 -DuplicateCount 100`.
+
+The normal Windows build is the onedir payload consumed by the MSI. A portable
+single executable remains available independently:
+
+```powershell
+.\scripts\build_v1.ps1 -Clean -OneFile
+.\scripts\smoke_packaged_app.ps1 -ExecutablePath '.\dist\portable\File Indexer V1.exe'
+```
 
 ## Integration boundary
 
-The eventual core should implement `BackendPort.execute_search(SearchPlan)` and
-advertise its implemented capabilities. Until a capability exists, the manifest
-can still describe it and the adapter will reject attempts predictably. HTTP
-controllers should be thin: parse JSON, call `QoLService`, map contract errors to
-4xx responses, and return the mapping. PyQt can call the same service directly.
+`MediaEngineBackend` implements `BackendPort.execute_search(SearchPlan)` and
+advertises the capabilities available in the running core. Capabilities that are
+not wired yet, such as query-vector production, are rejected predictably before
+execution. HTTP controllers stay thin: parse JSON, call `QoLService`, map
+contract errors to 4xx responses, and return the mapping. A Python GUI can call
+the same service directly.
 
 The planner deliberately produces a neutral plan rather than SQL. SQL compilation
-belongs beside Claude's database/repository implementation, where joins, FTS,
-R-tree, cursor stability, and permissions can be handled transactionally.
+is confined to the concrete adapter, where joins, FTS, R-tree filtering, strict
+cursors, and dynamic facets can be tested without leaking database fields into
+the public contract.

@@ -41,7 +41,17 @@ DEFAULT_CATEGORIES: dict[str, tuple[str, ...]] = {
         "close-up shot", "wide shot",
     ),
 }
-DEFAULT_LABELS = tuple(label for labels in DEFAULT_CATEGORIES.values() for label in labels)
+DEFAULT_GENRES: tuple[str, ...] = (
+    "horror film", "comedy", "drama", "action film", "science fiction",
+    "fantasy", "romance", "thriller", "mystery", "documentary film",
+    "internet meme", "reaction meme", "music video", "news report",
+    "sports highlight", "advertisement", "family home video", "travel video",
+    "educational video", "experimental art video",
+)
+DEFAULT_LABELS = (
+    *(label for labels in DEFAULT_CATEGORIES.values() for label in labels),
+    *DEFAULT_GENRES,
+)
 
 
 @dataclass(frozen=True, slots=True)

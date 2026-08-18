@@ -526,6 +526,46 @@ class AnnotationRepository(Repository):
             item["value"] = json_loads(item.pop("value_json", None))
         return out
 
+    def live_labels(
+        self,
+        asset_ids: Sequence[int],
+        *,
+        namespaces: Sequence[str] | None = None,
+        per_asset: int = 8,
+    ) -> dict[int, list[dict[str, Any]]]:
+        """Live annotations for many assets at once, keyed by asset id.
+
+        A grid of results needs each tile's labels, and asking per tile turns
+        one screen into a hundred round trips. Namespaces are prefix-matched,
+        matching :meth:`for_asset` and search.
+        """
+        ids = [int(value) for value in asset_ids]
+        if not ids:
+            return {}
+        clauses = [f"asset_id IN ({placeholders(len(ids))})", "superseded_by IS NULL"]
+        params: list[Any] = list(ids)
+        if namespaces:
+            matches = []
+            for namespace in namespaces:
+                matches.append("(namespace = ? OR namespace LIKE ?)")
+                params.extend([namespace, f"{namespace}.%"])
+            clauses.append(f"({' OR '.join(matches)})")
+        rows = self._query(
+            "SELECT asset_id, namespace, label, value_json, confidence, source FROM annotations "
+            f"WHERE {' AND '.join(clauses)} "
+            "ORDER BY asset_id, confidence DESC NULLS LAST, namespace, label",
+            params,
+        )
+        out: dict[int, list[dict[str, Any]]] = {}
+        for row in rows_to_dicts(rows):
+            asset_id = int(row["asset_id"])
+            bucket = out.setdefault(asset_id, [])
+            if len(bucket) >= per_asset:
+                continue
+            row["value"] = json_loads(row.pop("value_json", None))
+            bucket.append(row)
+        return out
+
     def asset_ids_with(
         self,
         namespace: str,

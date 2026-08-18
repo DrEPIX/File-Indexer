@@ -28,7 +28,7 @@ import threading
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Final
+from typing import Final, TypedDict
 
 from ..errors import SubprocessFailed, SubprocessTimeout
 
@@ -118,7 +118,19 @@ class CommandResult:
         return self.stderr.decode(encoding, errors="replace")[:limit]
 
 
-def _spawn_kwargs() -> dict[str, object]:
+class _SpawnFlags(TypedDict, total=False):
+    """The platform-specific half of a ``Popen`` call.
+
+    Declared as a TypedDict rather than ``dict[str, object]`` so that
+    ``Popen(**_spawn_kwargs())`` still resolves against ``Popen``'s overloads
+    instead of collapsing to "some mapping" and failing every one of them.
+    """
+
+    creationflags: int
+    start_new_session: bool
+
+
+def _spawn_kwargs() -> _SpawnFlags:
     """Platform flags that make the child killable as a group."""
     if _IS_WINDOWS:
         # A new process group is what lets taskkill /T find the descendants.
@@ -141,7 +153,7 @@ def kill_process_tree(process: subprocess.Popen[bytes], *, grace_s: float = 3.0)
     if process.poll() is not None:
         return
     try:
-        if _IS_WINDOWS:
+        if sys.platform == "win32":
             subprocess.run(
                 ["taskkill", "/F", "/T", "/PID", str(process.pid)],
                 capture_output=True,
@@ -160,10 +172,10 @@ def kill_process_tree(process: subprocess.Popen[bytes], *, grace_s: float = 3.0)
         pass
 
     try:
-        if not _IS_WINDOWS:
-            os.killpg(os.getpgid(process.pid), 9)  # SIGKILL
-        else:
+        if sys.platform == "win32":
             process.kill()
+        else:
+            os.killpg(os.getpgid(process.pid), 9)  # SIGKILL
     except (OSError, subprocess.SubprocessError):
         pass
     try:
@@ -200,7 +212,7 @@ def popen(
         stderr=stderr,
         bufsize=bufsize,
         shell=False,
-        **_spawn_kwargs(),  # type: ignore[arg-type]
+        **_spawn_kwargs(),
     )
 
 
@@ -244,7 +256,7 @@ def run_command(
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         shell=False,
-        **_spawn_kwargs(),  # type: ignore[arg-type]
+        **_spawn_kwargs(),
     )
     try:
         stdout, stderr = process.communicate(input=input_bytes, timeout=timeout)

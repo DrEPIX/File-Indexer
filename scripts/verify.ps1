@@ -2,7 +2,8 @@ param(
     [string]$PythonPath,
     [switch]$Quick,
     [switch]$FullTypeCheck,
-    [switch]$Smoke
+    [switch]$Smoke,
+    [switch]$PackagedApp
 )
 
 $ErrorActionPreference = "Stop"
@@ -129,6 +130,15 @@ try {
         & (Join-Path $PSScriptRoot "smoke_backend.ps1") -PythonPath $PythonPath
         if ($LASTEXITCODE -ne 0) {
             throw "Disposable backend smoke test failed with exit code $LASTEXITCODE"
+        }
+    }
+
+    if ($PackagedApp) {
+        Write-Host ""
+        Write-Host "==> Frozen desktop application smoke test" -ForegroundColor Cyan
+        & (Join-Path $PSScriptRoot "smoke_packaged_app.ps1") -PythonPath $PythonPath
+        if ($LASTEXITCODE -ne 0) {
+            throw "Frozen desktop application smoke test failed with exit code $LASTEXITCODE"
         }
     }
 

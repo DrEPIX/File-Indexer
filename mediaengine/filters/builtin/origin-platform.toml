@@ -1,0 +1,152 @@
+# Where a file came from, decided from its own name and container metadata.
+#
+# This pack is deliberately `rules`: platform origin is a naming convention,
+# not something a model should be asked to guess from pixels. It costs nothing
+# to run, needs no model, and works on the first scan.
+
+[pack]
+id = "filters.origin"
+name = "Origin platform"
+display_name = "Came from"
+version = "1.0.0"
+namespace = "origin.platform"
+method = "rules"
+accepts = ["video", "image", "audio", "other"]
+multi_label = false
+threshold = 0.5
+description = "Identify whether a file came from Twitch, YouTube, a phone, a screen recorder, or a camera."
+
+[[label]]
+name = "twitch"
+display = "Twitch"
+aliases = ["twitch vod", "stream", "vod", "livestream"]
+[[label.rule]]
+# Not \b: an underscore is a word character, so \btwitch\b misses
+# "stream_twitch.mp4" — and underscores are the commonest separator there is.
+field = "filename"
+pattern = "(?<![0-9A-Za-z])twitch(?![0-9A-Za-z])"
+weight = 2.0
+[[label.rule]]
+field = "path"
+pattern = "[\\\\/]twitch[\\\\/]"
+weight = 1.5
+[[label.rule]]
+# Twitch VOD downloaders keep the numeric video id, which is 9-11 digits and
+# usually prefixed with v.
+field = "filename"
+pattern = "(?:^|[_\\-\\s\\[(])v\\d{9,11}(?:[_\\-\\s\\])]|$)"
+weight = 1.5
+[[label.rule]]
+field = "filename"
+pattern = "(?<![0-9A-Za-z])(?:streamlink|twitchdownloader|ttv)(?![0-9A-Za-z])"
+weight = 1.0
+
+[[label]]
+name = "youtube"
+display = "YouTube"
+aliases = ["yt", "youtube dl", "ytdlp"]
+[[label.rule]]
+field = "filename"
+pattern = "(?<![0-9A-Za-z])(?:you ?tube|yt[-_]?dlp|youtube[-_]dl)(?![0-9A-Za-z])"
+weight = 2.0
+[[label.rule]]
+field = "path"
+pattern = "[\\\\/]youtube[\\\\/]"
+weight = 1.5
+[[label.rule]]
+# yt-dlp's default template ends with the 11-character video id in brackets.
+field = "filename"
+pattern = "\\[[A-Za-z0-9_-]{11}\\]"
+weight = 1.5
+[[label.rule]]
+field = "filename"
+pattern = "(?<![0-9A-Za-z])(?:1080p|720p|2160p)\\.(?:webm|mkv)$|\\.f\\d{3}\\."
+weight = 0.5
+
+[[label]]
+name = "tiktok"
+display = "TikTok"
+aliases = ["tik tok", "short form"]
+[[label.rule]]
+field = "filename"
+pattern = "(?<![0-9A-Za-z])(?:tik ?tok|douyin)(?![0-9A-Za-z])"
+weight = 2.0
+[[label.rule]]
+field = "filename"
+pattern = "^\\d{19}\\.mp4$"
+weight = 1.0
+
+[[label]]
+name = "screen-recording"
+display = "Screen recording"
+aliases = ["capture", "obs", "screen capture", "gameplay capture", "desktop recording"]
+[[label.rule]]
+field = "filename"
+pattern = "(?<![0-9A-Za-z])(?:obs|shadowplay|geforce|capture|screen[ _-]?(?:rec|record|capture))(?![0-9A-Za-z])"
+weight = 2.0
+[[label.rule]]
+field = "path"
+pattern = "[\\\\/](?:captures?|recordings?)[\\\\/]"
+weight = 1.5
+[[label.rule]]
+# Windows Game Bar and OBS default templates are timestamped to the second.
+field = "filename"
+pattern = "\\d{4}-\\d{2}-\\d{2}[ _]\\d{2}-\\d{2}-\\d{2}"
+weight = 1.0
+[[label.rule]]
+field = "encoder"
+pattern = "obs|lavf.*obs"
+weight = 1.5
+
+[[label]]
+name = "phone-camera"
+display = "Phone camera"
+aliases = ["mobile", "phone", "handset"]
+[[label.rule]]
+# Anchored to the extension on purpose. Without the tail anchor, a GUID such
+# as C9550013-BB54-43C1-... satisfies "prefix letter, four digits, three more
+# digits" halfway through and every random-named file becomes a camera photo.
+field = "filename"
+pattern = "^(?:IMG|VID|PXL|MVIMG|WIN)[_-]?\\d{4,}(?:[_-]\\w+)?\\.[A-Za-z0-9]+$"
+weight = 2.0
+[[label.rule]]
+field = "filename"
+pattern = "^\\d{8}[_-]\\d{6}\\.(?:jpg|jpeg|png|mp4|heic|mov)$"
+weight = 1.5
+[[label.rule]]
+field = "path"
+pattern = "[\\\\/](?:DCIM|Camera Roll)[\\\\/]"
+weight = 2.0
+
+[[label]]
+name = "camera"
+display = "Dedicated camera"
+aliases = ["dslr", "mirrorless", "camcorder", "gopro"]
+[[label.rule]]
+field = "filename"
+pattern = "^(?:_?DSC|P|GOPR|GX|GH|MVI|C|A)\\d{3,8}\\.[A-Za-z0-9]+$"
+weight = 1.5
+[[label.rule]]
+field = "filename"
+pattern = "\\.(?:cr2|cr3|nef|arw|orf|raf|rw2|dng)$"
+weight = 2.0
+
+[[label]]
+name = "messaging"
+display = "Chat or messaging app"
+aliases = ["whatsapp", "discord", "telegram", "signal", "imessage"]
+[[label.rule]]
+field = "filename"
+pattern = "(?<![0-9A-Za-z])(?:whatsapp|discord|telegram|signal|messenger)(?![0-9A-Za-z])"
+weight = 2.0
+[[label.rule]]
+# WhatsApp's own template also satisfies the generic "IMG + digits" phone
+# pattern. Weighting the specific signal higher is what breaks that tie
+# toward the more informative answer.
+field = "filename"
+pattern = "^(?:IMG|VID|AUD|PTT|STK)-\\d{8}-WA\\d+"
+weight = 3.0
+[[label.rule]]
+field = "path"
+pattern = "[\\\\/](?:WhatsApp|Discord|Telegram)[\\\\/]"
+weight = 2.0

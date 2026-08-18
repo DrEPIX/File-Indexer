@@ -18,9 +18,16 @@ from __future__ import annotations
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from ..errors import PluginContractError
+
+if TYPE_CHECKING:
+    # Imported for the protocol signature only. A runtime import would make
+    # the plugin-facing contract depend on the repository layer that
+    # AnalysisContext reads through, which is exactly the direction this
+    # module exists to prevent.
+    from .context import AnalysisContext
 
 __all__ = [
     "PROTOCOL",
@@ -142,7 +149,7 @@ class Analyzer(Protocol):
 
     info: PluginInfo
 
-    def analyze(self, ctx: "AnalysisContext") -> Sequence[Annotation]:  # noqa: F821
+    def analyze(self, ctx: "AnalysisContext") -> Sequence[Annotation]:
         """Inspect one asset via the context; return zero or more claims.
 
         An empty return is a valid success — "nothing to say" — and marks the

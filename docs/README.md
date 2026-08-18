@@ -49,3 +49,13 @@ configured bearer token.
 See `docs/DEPLOYMENT.md`, `docs/AI_TAGGING.md`,
 `docs/FACE_REFERENCE_PACKS.md`, and `docker/README.md` for container,
 local-model, face-reference, safety, and GPU profiles.
+
+`docs/FILTER_PACKS.md` covers filter packs — installable TOML taxonomies that
+add a search facet (sport, animation, origin platform, adult-content
+screening) without any code. `docs/ASSISTANT.md` covers Studio's in-app
+assistant, which can author those packs from a description and stages every
+change for approval.
+
+The local “Who is this?” clustering flow, manually linked profiles, and
+non-generative Wikipedia biographies are documented in
+`docs/PEOPLE_AND_PROFILES.md`.

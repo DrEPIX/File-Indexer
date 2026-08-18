@@ -11,7 +11,7 @@ import json
 import os
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from tkinter import Canvas, StringVar, ttk
+from tkinter import Canvas, StringVar, font as tkfont, ttk
 from typing import Any, cast
 
 from ..config import Config
@@ -39,6 +39,7 @@ class Theme:
     header_text: str
     header_muted: str
     is_dark: bool = False
+    chrome: str = "classic"
 
 
 THEMES: dict[str, Theme] = {
@@ -120,6 +121,27 @@ THEMES: dict[str, Theme] = {
         header_muted="#E2E2E2",
         is_dark=True,
     ),
+    "V1 Neo": Theme(
+        name="V1 Neo",
+        bg="#F4F2F8",
+        panel="#FFFFFF",
+        panel_alt="#ECE9F3",
+        raised="#F9F7FC",
+        text="#25222D",
+        muted="#696273",
+        accent="#6746B5",
+        accent_hover="#54379A",
+        secondary="#267B72",
+        border="#D9D3E4",
+        selection="#E4DCF8",
+        danger="#B6425C",
+        header_start="#211C31",
+        header_end="#613B58",
+        header_text="#FFF9F5",
+        header_muted="#D9CDD7",
+        is_dark=False,
+        chrome="neo",
+    ),
 }
 
 
@@ -145,8 +167,8 @@ class UISettings:
 def ui_settings_path(config: Config) -> Path:
     """Keep UI preferences beside the desktop config, never in the database."""
     if config.source_path is not None:
-        return cast(Path, config.source_path.resolve().parent / "ui.json")
-    return cast(Path, config.storage.db_path.resolve().parent / "ui.json")
+        return config.source_path.resolve().parent / "ui.json"
+    return config.storage.db_path.resolve().parent / "ui.json"
 
 
 def load_ui_settings(config: Config) -> UISettings:
@@ -199,6 +221,332 @@ def contrast_ratio(left: str, right: str) -> float:
 
     high, low = sorted((luminance(left), luminance(right)), reverse=True)
     return (high + 0.05) / (low + 0.05)
+
+
+def _rounded_rectangle(
+    canvas: Canvas,
+    x1: float,
+    y1: float,
+    x2: float,
+    y2: float,
+    radius: float,
+    **kwargs: Any,
+) -> int:
+    """Draw a smooth rounded rectangle without platform-native chrome."""
+    radius = max(0.0, min(radius, (x2 - x1) / 2, (y2 - y1) / 2))
+    points = (
+        x1 + radius, y1,
+        x2 - radius, y1,
+        x2, y1,
+        x2, y1 + radius,
+        x2, y2 - radius,
+        x2, y2,
+        x2 - radius, y2,
+        x1 + radius, y2,
+        x1, y2,
+        x1, y2 - radius,
+        x1, y1 + radius,
+        x1, y1,
+    )
+    return int(canvas.create_polygon(points, smooth=True, splinesteps=24, **kwargs))
+
+
+class ModernScrollbar(Canvas):
+    """Compact, arrowless scrollbar with a draggable pill-shaped thumb."""
+
+    def __init__(self, parent: Any, command: Any, theme: Theme, *, scale: float = 1.0) -> None:
+        self.command = command
+        self.theme = theme
+        self.ui_scale = scale
+        self.first = 0.0
+        self.last = 1.0
+        self._thumb = (0.0, 0.0)
+        self._drag_offset: float | None = None
+        self._hover = False
+        super().__init__(
+            parent,
+            width=max(9, round(11 * scale)),
+            background=theme.panel,
+            highlightthickness=0,
+            borderwidth=0,
+            cursor="arrow",
+        )
+        self.bind("<Configure>", lambda _: self.redraw())
+        self.bind("<Enter>", self._enter)
+        self.bind("<Leave>", self._leave)
+        self.bind("<Button-1>", self._press)
+        self.bind("<B1-Motion>", self._drag)
+        self.bind("<ButtonRelease-1>", self._release)
+
+    def apply_theme(self, theme: Theme, scale: float) -> None:
+        self.theme = theme
+        self.ui_scale = scale
+        self.configure(width=max(9, round(11 * scale)), background=theme.panel)
+        self.redraw()
+
+    def set(self, first: str | float, last: str | float) -> None:
+        self.first = max(0.0, min(1.0, float(first)))
+        self.last = max(self.first, min(1.0, float(last)))
+        self.redraw()
+
+    def redraw(self) -> None:
+        width = max(1, self.winfo_width())
+        height = max(1, self.winfo_height())
+        pad = max(2, round(2 * self.ui_scale))
+        track = max(1, height - pad * 2)
+        visible = self.last - self.first
+        thumb_height = min(track, max(round(34 * self.ui_scale), track * visible))
+        travel = max(0.0, track - thumb_height)
+        top = pad + travel * self.first / max(0.0001, 1.0 - visible)
+        bottom = top + thumb_height
+        self._thumb = (top, bottom)
+        self.delete("all")
+        if visible >= 0.999:
+            return
+        color = self.theme.accent if self._hover or self._drag_offset is not None else mix_color(self.theme.muted, self.theme.panel, 0.34)
+        _rounded_rectangle(
+            self,
+            pad,
+            top,
+            width - pad,
+            bottom,
+            max(2, (width - pad * 2) / 2),
+            fill=color,
+            outline="",
+        )
+
+    def _enter(self, _: Any) -> None:
+        self._hover = True
+        self.redraw()
+
+    def _leave(self, _: Any) -> None:
+        self._hover = False
+        self.redraw()
+
+    def _press(self, event: Any) -> None:
+        top, bottom = self._thumb
+        if top <= event.y <= bottom:
+            self._drag_offset = event.y - top
+        else:
+            self._drag_offset = (bottom - top) / 2
+            self._move_to(event.y - self._drag_offset)
+
+    def _drag(self, event: Any) -> None:
+        if self._drag_offset is not None:
+            self._move_to(event.y - self._drag_offset)
+
+    def _release(self, _: Any) -> None:
+        self._drag_offset = None
+        self.redraw()
+
+    def _move_to(self, top: float) -> None:
+        pad = max(2, round(2 * self.ui_scale))
+        travel = max(1.0, self.winfo_height() - pad * 2 - (self._thumb[1] - self._thumb[0]))
+        fraction = max(0.0, min(1.0, (top - pad) / travel))
+        self.command("moveto", fraction)
+
+
+class ModernButton(Canvas):
+    """Keyboard-accessible button with optional V1 Neo rounded treatment."""
+
+    def __init__(
+        self,
+        parent: Any,
+        theme: Theme,
+        text: str,
+        command: Any,
+        *,
+        variant: str = "neutral",
+        scale: float = 1.0,
+    ) -> None:
+        self.theme = theme
+        self.ui_scale = scale
+        self.label = text
+        self.command = command
+        self.variant = variant
+        self._hover = False
+        self._pressed = False
+        super().__init__(
+            parent,
+            background=theme.bg,
+            highlightthickness=0,
+            borderwidth=0,
+            cursor="hand2",
+            takefocus=True,
+        )
+        self._update_metrics()
+        self.bind("<Configure>", lambda _: self.redraw())
+        self.bind("<Enter>", self._enter)
+        self.bind("<Leave>", self._leave)
+        self.bind("<ButtonPress-1>", self._press)
+        self.bind("<ButtonRelease-1>", self._release)
+        self.bind("<Return>", self._invoke)
+        self.bind("<space>", self._invoke)
+        self.bind("<FocusIn>", lambda _: self.redraw())
+        self.bind("<FocusOut>", lambda _: self.redraw())
+
+    def _update_metrics(self) -> None:
+        font_size = max(8, round(9 * self.ui_scale))
+        font = tkfont.Font(family="Segoe UI Semibold", size=font_size)
+        horizontal = round((24 if self.variant == "primary" else 20) * self.ui_scale)
+        self.configure(
+            width=max(round(72 * self.ui_scale), font.measure(self.label) + horizontal * 2),
+            height=max(36, round(38 * self.ui_scale)),
+            background=self.theme.bg,
+        )
+
+    def apply_theme(self, theme: Theme, scale: float) -> None:
+        self.theme = theme
+        self.ui_scale = scale
+        self._update_metrics()
+        self.redraw()
+
+    def redraw(self) -> None:
+        width = max(2, self.winfo_width())
+        height = max(2, self.winfo_height())
+        self.delete("all")
+        neo = self.theme.chrome == "neo"
+        radius = round(11 * self.ui_scale) if neo else 1
+        if self.variant == "primary":
+            fill = self.theme.accent_hover if self._hover or self._pressed else self.theme.accent
+            foreground = "#FFFFFF"
+            outline = fill
+        elif self.variant == "quiet":
+            fill = self.theme.selection if self._hover or self._pressed else self.theme.bg
+            foreground = self.theme.text if self._hover else self.theme.muted
+            outline = fill
+        elif self.variant == "chip":
+            fill = self.theme.selection if self._hover or self._pressed else self.theme.raised
+            foreground = self.theme.text
+            outline = self.theme.accent if self._hover else self.theme.border
+        else:
+            fill = self.theme.selection if self._hover or self._pressed else self.theme.panel_alt
+            foreground = self.theme.text
+            outline = self.theme.border
+        inset = round(2 * self.ui_scale) if neo and self.variant == "primary" else 1
+        if neo and self.variant == "primary":
+            _rounded_rectangle(
+                self,
+                inset,
+                inset + 2,
+                width - inset,
+                height - inset,
+                radius,
+                fill=mix_color(self.theme.accent, self.theme.bg, 0.68),
+                outline="",
+            )
+        focus = self.focus_get() is self
+        _rounded_rectangle(
+            self,
+            inset,
+            inset,
+            width - inset,
+            height - inset - (2 if neo and self.variant == "primary" else 0),
+            radius,
+            fill=fill,
+            outline=self.theme.secondary if focus else outline,
+            width=2 if focus else 1,
+        )
+        self.create_text(
+            width / 2,
+            height / 2 - (1 if neo and self.variant == "primary" else 0),
+            text=self.label,
+            fill=foreground,
+            font=("Segoe UI Semibold", max(8, round(9 * self.ui_scale))),
+        )
+
+    def _enter(self, _: Any) -> None:
+        self._hover = True
+        self.redraw()
+
+    def _leave(self, _: Any) -> None:
+        self._hover = False
+        self._pressed = False
+        self.redraw()
+
+    def _press(self, _: Any) -> None:
+        self._pressed = True
+        self.redraw()
+
+    def _release(self, event: Any) -> None:
+        armed = self._pressed and 0 <= event.x <= self.winfo_width() and 0 <= event.y <= self.winfo_height()
+        self._pressed = False
+        self.redraw()
+        if armed:
+            self.command()
+
+    def _invoke(self, _: Any) -> str:
+        self.command()
+        return "break"
+
+
+class StatCard(Canvas):
+    """A scalable stat card that gains rounded, layered chrome in V1 Neo."""
+
+    def __init__(
+        self,
+        parent: Any,
+        theme: Theme,
+        value: StringVar,
+        label: str,
+        eyebrow: str,
+        *,
+        scale: float = 1.0,
+    ) -> None:
+        self.theme = theme
+        self.ui_scale = scale
+        self.value = value
+        self.label = label
+        self.eyebrow = eyebrow
+        super().__init__(
+            parent,
+            height=round(92 * scale),
+            background=theme.bg,
+            highlightthickness=0,
+            borderwidth=0,
+        )
+        self.bind("<Configure>", lambda _: self.redraw())
+        self.value.trace_add("write", lambda *_: self.redraw())
+
+    def apply_theme(self, theme: Theme, scale: float) -> None:
+        self.theme = theme
+        self.ui_scale = scale
+        self.configure(height=round(92 * scale), background=theme.bg)
+        self.redraw()
+
+    def redraw(self) -> None:
+        width = max(2, self.winfo_width())
+        height = max(2, self.winfo_height())
+        self.delete("all")
+        neo = self.theme.chrome == "neo"
+        inset = max(1, round(2 * self.ui_scale)) if neo else 0
+        radius = round(14 * self.ui_scale) if neo else 1
+        if neo:
+            _rounded_rectangle(
+                self,
+                inset + 1,
+                inset + 3,
+                width - inset,
+                height - inset,
+                radius,
+                fill=mix_color(self.theme.border, self.theme.bg, 0.5),
+                outline="",
+            )
+        _rounded_rectangle(
+            self,
+            inset,
+            inset,
+            width - inset,
+            height - inset - (2 if neo else 0),
+            radius,
+            fill=self.theme.panel,
+            outline=self.theme.border,
+            width=1,
+        )
+        x = round(15 * self.ui_scale)
+        self.create_text(x, round(19 * self.ui_scale), text=self.eyebrow, anchor="w", fill=self.theme.accent, font=("Segoe UI Semibold", max(8, round(8 * self.ui_scale))))
+        self.create_text(x, round(48 * self.ui_scale), text=self.value.get(), anchor="w", fill=self.theme.text, font=("Segoe UI Semibold", max(15, round(21 * self.ui_scale))))
+        self.create_text(x, round(75 * self.ui_scale), text=self.label, anchor="w", fill=self.theme.muted, font=("Segoe UI", max(8, round(9 * self.ui_scale))))
 
 
 class GradientHeader(Canvas):
@@ -300,7 +648,7 @@ class GradientHeader(Canvas):
         )
         title_size = max(15, round(18 * self.ui_scale))
         small_size = max(8, round(9 * self.ui_scale))
-        self.create_text(
+        title_id = self.create_text(
             round(24 * self.ui_scale),
             round(27 * self.ui_scale),
             text="FILE INDEXER",
@@ -308,19 +656,25 @@ class GradientHeader(Canvas):
             fill=self.theme.header_text,
             font=("Segoe UI Semibold", title_size),
         )
-        badge_x = round(166 * self.ui_scale)
-        self.create_rectangle(
+        title_bounds = self.bbox(title_id)
+        badge_x = (title_bounds[2] if title_bounds else round(160 * self.ui_scale)) + round(11 * self.ui_scale)
+        badge_width = round((42 if self.theme.chrome == "neo" else 35) * self.ui_scale)
+        badge_y1 = round(14 * self.ui_scale)
+        badge_y2 = round(39 * self.ui_scale)
+        _rounded_rectangle(
+            self,
             badge_x,
-            round(15 * self.ui_scale),
-            badge_x + round(35 * self.ui_scale),
-            round(38 * self.ui_scale),
+            badge_y1,
+            badge_x + badge_width,
+            badge_y2,
+            round(11 * self.ui_scale) if self.theme.chrome == "neo" else 1,
             fill=self.theme.accent,
             outline="",
         )
         self.create_text(
-            badge_x + round(17 * self.ui_scale),
+            badge_x + badge_width / 2,
             round(26 * self.ui_scale),
-            text="V1",
+            text="NEO" if self.theme.chrome == "neo" else "V1",
             fill="#FFFFFF",
             font=("Segoe UI Semibold", small_size),
         )

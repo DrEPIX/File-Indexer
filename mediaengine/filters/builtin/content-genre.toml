@@ -1,0 +1,106 @@
+# What shelf a video belongs on: the coarse "what am I looking at" cut.
+#
+# Deliberately separate from `filters.format`, which answers a different
+# question. Format is about *how a video was made* — a feature film, an
+# episode, a trailer, a screen capture. Genre is about *where you would file
+# it* — sport, news, memes, adult. A gameshow is one production format and one
+# shelf; a meme compilation of gameshow clips is the same format and a
+# different shelf. Forcing one namespace to answer both makes both facets
+# worse, so this pack stands on its own and the two can be combined in a query:
+#
+#     content.genre:sports content.format:movie
+#
+# Single-label on purpose. Genre is the answer to "which one shelf", and a
+# facet whose every value is true of every asset is not a filter. Copy this
+# pack and set `multi_label = true` if your library is mostly compilations.
+
+[pack]
+id = "filters.genre"
+name = "Video genres"
+display_name = "Genre"
+version = "1.0.0"
+namespace = "content.genre"
+method = "vision"
+accepts = ["video"]
+multi_label = false
+threshold = 0.4
+description = "Sort videos onto shelves — movies, shows, sport, news, games, memes, art, adult — from what is actually on screen."
+
+[[label]]
+# An explicit way to decline. A model asked "which genre is this" with no way
+# to say "none of these" answers with the nearest genre instead, and a phone
+# clip of a birthday ends up filed as a movie. In `reject_labels`, so choosing
+# it records nothing at all.
+name = "none"
+display = "No clear genre"
+hint = "none of the listed genres — personal footage, family video, a random phone clip, scenery, pets, an unedited handheld recording with no production of any kind"
+
+[[label]]
+name = "movies"
+display = "Movies"
+aliases = ["movie", "film", "feature", "cinema", "flick"]
+hint = "a feature film: cinematic widescreen framing, deliberate lighting and colour grading, opening title card or end credits, scripted scenes with actors"
+
+[[label]]
+name = "shows"
+display = "TV shows"
+aliases = ["show", "series", "episode", "sitcom", "drama", "tv show", "season"]
+hint = "an episode of a scripted series: a title sequence, recurring sets and cast, act breaks, television rather than cinema framing"
+
+[[label]]
+name = "gameshows"
+display = "Game shows"
+aliases = ["gameshow", "game show", "quiz", "quiz show", "panel show", "reality competition"]
+hint = "a studio contest: a host with a microphone facing contestants at podiums or buzzers, a bright decorated set with audience seating, on-screen score or prize graphics"
+
+[[label]]
+name = "news"
+display = "News"
+aliases = ["newscast", "bulletin", "current affairs", "press conference", "broadcast news"]
+hint = "a news programme: an anchor at a desk or a reporter on location, a lower-third name-and-topic strip, a headline ticker, a station logo in the corner"
+
+[[label]]
+name = "sports"
+display = "Sport"
+aliases = ["sport", "match", "game", "fixture", "highlights", "athletics"]
+hint = "athletic competition: a pitch, court, track, ring or rink, players in kit, a scoreboard or clock overlay, crowd in the background"
+
+[[label]]
+name = "games"
+display = "Games"
+aliases = ["gaming", "gameplay", "video game", "lets play", "let's play", "speedrun", "esports"]
+hint = "rendered video-game graphics with a game interface: health or ammo bars, a minimap, a crosshair, quest text, a scoreboard drawn by the game engine"
+
+[[label]]
+name = "memes"
+display = "Memes"
+aliases = ["meme", "funny", "shitpost", "viral", "tiktok", "reel", "short"]
+hint = "a short internet joke clip: burned-in caption text at the top or bottom, vertical or square framing, abrupt cuts, reaction footage, watermarks from a social app"
+
+[[label]]
+name = "art"
+display = "Art and design"
+aliases = ["artwork", "illustration", "animation showcase", "drawing", "painting", "design", "motion graphics"]
+hint = "artwork as the subject: a drawing or painting timelapse, a portfolio or gallery reel, abstract motion graphics, a 3D render showreel — the craft is the content, not a story"
+
+[[label]]
+name = "live-tv"
+display = "Live TV"
+aliases = ["live", "livestream", "live broadcast", "simulcast", "as live"]
+hint = "a broadcast captured as it aired live: a LIVE badge or on-air indicator, a running clock, a continuous unedited feed, presenters reacting in real time, occasional technical wobble"
+
+[[label]]
+name = "recorded-tv"
+display = "Recorded TV"
+aliases = ["dvr", "pvr", "off air", "off-air", "tv recording", "timeshift", "vcr", "taped"]
+hint = "an off-air recording of a television channel: a persistent channel logo bug in a corner, commercial breaks left in, an on-screen programme guide or recording banner, letterboxed or interlaced picture from broadcast"
+
+[[label]]
+name = "adult"
+display = "Adult"
+aliases = ["porn", "nsfw", "xxx", "explicit", "18+"]
+# Kept coarse on purpose. `filters.safety-nsfw` is the pack for actually
+# screening a library — it rates every asset safe/review/flagged and is tuned
+# to catch uncertain cases. This label exists so "adult" is a shelf like any
+# other, not a substitute for that screening.
+hint = "sexually explicit content intended as pornography — nudity in an overtly sexual context, not art nudes, medical imagery, or swimwear"

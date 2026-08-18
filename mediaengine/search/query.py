@@ -21,16 +21,20 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from ..types import MEDIA_TYPE_VALUES
 from ..util import parse_datetime, to_iso
+
+if TYPE_CHECKING:
+    from ..filters.vocabulary import Vocabulary
 
 __all__ = ["LabelFilter", "Query", "parse_query"]
 
 _TOKEN = re.compile(
     r"""
-    (?P<key>[A-Za-z0-9._-]+) : (?P<quoted>"[^"]*"|'[^']*') |   # key:"quoted value"
-    (?P<key2>[A-Za-z0-9._-]+) : (?P<bare>[^\s"']+) |           # key:bare
+    (?P<key>-?[A-Za-z0-9._-]+) : (?P<quoted>"[^"]*"|'[^']*') |  # key:"quoted value"
+    (?P<key2>-?[A-Za-z0-9._-]+) : (?P<bare>[^\s"']+) |          # key:bare, -key:bare
     (?P<quoted_text>"[^"]*"|'[^']*') |                          # "quoted text"
     (?P<word>\S+)                                               # plain word
     """,
@@ -142,8 +146,21 @@ def _parse_date_boundary(raw: str, *, end: bool) -> str | None:
     return to_iso(parsed)
 
 
-def parse_query(raw: str, *, limit: int = 50, offset: int = 0) -> Query:
-    """Turn the shared one-line syntax into a :class:`Query`."""
+def parse_query(
+    raw: str,
+    *,
+    limit: int = 50,
+    offset: int = 0,
+    vocabulary: "Vocabulary | None" = None,
+) -> Query:
+    """Turn the shared one-line syntax into a :class:`Query`.
+
+    ``vocabulary`` comes from the installed filter packs. It lets a pack's
+    namespace be addressed by its short name (``sport:football`` as well as
+    ``content.sport:football``) and lets a label be named by any alias the pack
+    declares (``sport:footy``). Without it every rule below still applies —
+    packs widen the vocabulary, they are not required by it.
+    """
     query = Query(limit=limit, offset=offset)
     words: list[str] = []
 
@@ -157,7 +174,10 @@ def parse_query(raw: str, *, limit: int = 50, offset: int = 0) -> Query:
 
         key = (match.group("key") or match.group("key2") or "").lower()
         value = _unquote(match.group("quoted") or match.group("bare") or "")
-        if not value:
+        negated = key.startswith("-")
+        if negated:
+            key = key[1:]
+        if not value or not key:
             continue
 
         if key == "type":
@@ -219,7 +239,26 @@ def parse_query(raw: str, *, limit: int = 50, offset: int = 0) -> Query:
             # The default case IS the feature: an unreserved key is a plugin
             # namespace. `color.dominant:blue` filters on an annotation the
             # core has never heard of.
-            query.labels.append(LabelFilter(namespace=key, label=value))
+            namespace, label = _resolve(key, value, vocabulary)
+            target = query.excluded_labels if negated else query.labels
+            target.append(LabelFilter(namespace=namespace, label=label))
 
     query.text = " ".join(words).strip()
     return query
+
+
+def _resolve(
+    key: str, value: str, vocabulary: "Vocabulary | None"
+) -> tuple[str, str]:
+    """Map a typed ``key:value`` onto a real namespace and label.
+
+    Falls through unchanged when no pack claims the key, so a namespace the
+    engine has never seen still filters exactly as it did before.
+    """
+    if vocabulary is None:
+        return key, value
+    namespace = vocabulary.resolve_namespace(key) or key
+    resolved = vocabulary.resolve_label(value.lower())
+    if resolved is not None and resolved[0] == namespace:
+        return namespace, resolved[1]
+    return namespace, value

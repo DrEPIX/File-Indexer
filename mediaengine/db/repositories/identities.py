@@ -176,6 +176,46 @@ class IdentityRepository(Repository):
             )
         )
 
+    def face_vector_groups(
+        self, *, limit_per_group: int = 250_000
+    ) -> list[tuple[int, int, np.ndarray, list[dict[str, Any]]]]:
+        """Return comparable unconfirmed face vectors grouped by producer/dimension."""
+
+        groups = self._query(
+            "SELECT e.producer_id, e.dim FROM embeddings e "
+            "LEFT JOIN region_identity ri ON ri.region_id=e.region_id AND ri.confirmed=1 "
+            "WHERE e.kind='vision.face' AND e.region_id IS NOT NULL AND ri.region_id IS NULL "
+            "GROUP BY e.producer_id, e.dim ORDER BY e.producer_id, e.dim"
+        )
+        output: list[tuple[int, int, np.ndarray, list[dict[str, Any]]]] = []
+        for group in groups:
+            producer_id = int(group["producer_id"])
+            dim = int(group["dim"])
+            rows = self._query(
+                "SELECT e.id AS embedding_id, e.region_id, r.asset_id, e.vector "
+                "FROM embeddings e JOIN regions r ON r.id=e.region_id "
+                "LEFT JOIN region_identity ri ON ri.region_id=e.region_id AND ri.confirmed=1 "
+                "WHERE e.kind='vision.face' AND e.producer_id=? AND e.dim=? "
+                "AND ri.region_id IS NULL ORDER BY e.id LIMIT ?",
+                (producer_id, dim, max(1, min(int(limit_per_group), 1_000_000))),
+            )
+            vectors = [unpack_vector(row["vector"]) for row in rows]
+            matrix = (
+                np.vstack(vectors).astype("float32", copy=False)
+                if vectors
+                else np.zeros((0, dim), dtype="float32")
+            )
+            meta = [
+                {
+                    "embedding_id": int(row["embedding_id"]),
+                    "region_id": int(row["region_id"]),
+                    "asset_id": int(row["asset_id"]),
+                }
+                for row in rows
+            ]
+            output.append((producer_id, dim, matrix, meta))
+        return output
+
     # ── identities ──────────────────────────────────────────────────────────
 
     def create_identity(
@@ -445,6 +485,145 @@ class IdentityRepository(Repository):
             )
         return rows_to_dicts(rows)
 
+    def replace_unnamed_clusters(
+        self,
+        producer_id: int,
+        clusters: Sequence[tuple[Sequence[float], Sequence[int]]],
+        *,
+        conn: sqlite3.Connection | None = None,
+    ) -> list[int]:
+        """Replace machine-only clusters while preserving every named decision."""
+
+        def _op(c: sqlite3.Connection) -> list[int]:
+            c.execute(
+                "DELETE FROM region_identity WHERE confirmed=0 AND region_id IN ("
+                "SELECT e.region_id FROM embeddings e WHERE e.producer_id=? "
+                "AND e.kind='vision.face' AND e.region_id IS NOT NULL)",
+                (producer_id,),
+            )
+            c.execute(
+                "DELETE FROM clusters WHERE producer_id=? AND identity_id IS NULL",
+                (producer_id,),
+            )
+            created: list[int] = []
+            now = utcnow_iso()
+            for centroid, region_ids in clusters:
+                blob, dim, _ = pack_vector(centroid)
+                cluster_id = self._insert(
+                    c,
+                    "clusters",
+                    {
+                        "producer_id": producer_id,
+                        "label": None,
+                        "centroid": blob,
+                        "dim": dim,
+                        "size": len(region_ids),
+                        "identity_id": None,
+                        "created_at": now,
+                    },
+                )
+                for region_id in region_ids:
+                    self._upsert(
+                        c,
+                        "region_identity",
+                        {
+                            "region_id": int(region_id),
+                            "identity_id": None,
+                            "cluster_id": cluster_id,
+                            "confidence": None,
+                            "source": "derived",
+                            "confirmed": 0,
+                            "updated_at": now,
+                        },
+                        ["region_id"],
+                    )
+                created.append(cluster_id)
+            return created
+
+        return self._write(_op, conn, label="replace_unnamed_face_clusters")
+
+    def cluster_review_queue(self, *, limit: int = 200) -> list[dict[str, Any]]:
+        """Unnamed face groups ready for an Apple/Google Photos-style prompt."""
+
+        return rows_to_dicts(
+            self._query(
+                "SELECT c.id, c.producer_id, c.size, c.dim, c.created_at, "
+                "(SELECT ri.region_id FROM region_identity ri WHERE ri.cluster_id=c.id "
+                " ORDER BY ri.confidence DESC, ri.region_id LIMIT 1) AS cover_region_id, "
+                "(SELECT r.asset_id FROM region_identity ri JOIN regions r ON r.id=ri.region_id "
+                " WHERE ri.cluster_id=c.id ORDER BY ri.confidence DESC, ri.region_id LIMIT 1) "
+                "AS cover_asset_id FROM clusters c WHERE c.identity_id IS NULL AND c.size > 0 "
+                "ORDER BY c.size DESC, c.id LIMIT ?",
+                (max(1, min(int(limit), 10_000)),),
+            )
+        )
+
+    def regions_for_cluster(self, cluster_id: int, *, limit: int = 500) -> list[dict[str, Any]]:
+        return rows_to_dicts(
+            self._query(
+                "SELECT ri.region_id, ri.confidence, r.asset_id, r.frame_time, "
+                "r.x, r.y, r.w, r.h FROM region_identity ri "
+                "JOIN regions r ON r.id=ri.region_id WHERE ri.cluster_id=? "
+                "ORDER BY r.asset_id, r.frame_time LIMIT ?",
+                (cluster_id, max(1, min(int(limit), 10_000))),
+            )
+        )
+
+    def name_cluster(
+        self,
+        cluster_id: int,
+        display_name: str,
+        *,
+        conn: sqlite3.Connection | None = None,
+    ) -> dict[str, Any]:
+        """Human names a suggested group; every current member becomes confirmed."""
+
+        clean_name = display_name.strip()
+        if not clean_name:
+            raise ValueError("display_name may not be empty")
+        now = utcnow_iso()
+
+        def _op(c: sqlite3.Connection) -> dict[str, Any]:
+            cluster = c.execute("SELECT * FROM clusters WHERE id=?", (cluster_id,)).fetchone()
+            if cluster is None:
+                raise NotFoundError(f"cluster {cluster_id} does not exist")
+            existing = c.execute(
+                "SELECT id FROM identities WHERE display_name=?", (clean_name,)
+            ).fetchone()
+            identity_id = int(existing["id"]) if existing is not None else self._insert(
+                c,
+                "identities",
+                {
+                    "display_name": clean_name,
+                    "created_at": now,
+                    "updated_at": now,
+                    "notes": "Named from local face-cluster review",
+                },
+            )
+            c.execute(
+                "UPDATE clusters SET identity_id=?, label=? WHERE id=?",
+                (identity_id, clean_name, cluster_id),
+            )
+            region_rows = c.execute(
+                "SELECT ri.region_id, r.asset_id FROM region_identity ri "
+                "JOIN regions r ON r.id=ri.region_id WHERE ri.cluster_id=? AND ri.confirmed=0",
+                (cluster_id,),
+            ).fetchall()
+            c.execute(
+                "UPDATE region_identity SET identity_id=?, source='user', confirmed=1, "
+                "confidence=1.0, updated_at=? WHERE cluster_id=? AND confirmed=0",
+                (identity_id, now, cluster_id),
+            )
+            return {
+                "identity_id": identity_id,
+                "cluster_id": cluster_id,
+                "display_name": clean_name,
+                "regions_confirmed": len(region_rows),
+                "asset_ids": sorted({int(row["asset_id"]) for row in region_rows}),
+            }
+
+        return self._write(_op, conn, label="name_face_cluster")
+
     # ── purge ───────────────────────────────────────────────────────────────
 
     def purge_biometrics(self, *, conn: sqlite3.Connection | None = None) -> dict[str, int]:
@@ -476,6 +655,12 @@ class IdentityRepository(Repository):
             ).rowcount
             counts["face_reference_packs"] = c.execute(
                 "DELETE FROM face_reference_packs"
+            ).rowcount
+            counts["identity_profiles"] = c.execute(
+                "DELETE FROM identity_profiles"
+            ).rowcount
+            counts["identity_biographies"] = c.execute(
+                "DELETE FROM identity_biographies"
             ).rowcount
             # Materialise the target set *first*. Evaluating the subquery
             # lazily would be a correctness bug: deleting region_identity

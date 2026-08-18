@@ -185,7 +185,8 @@ class Database:
         """Run a SELECT and return the first row, or ``None``."""
         cur = self.reader().execute(sql, params)
         try:
-            return cur.fetchone()
+            row: sqlite3.Row | None = cur.fetchone()
+            return row
         finally:
             cur.close()
 

@@ -1,9 +1,9 @@
 [plugin]
 id = "acme.clip"
-version = "1.2.0"
+version = "1.3.0"
 transport = "http"
 accepts = ["image", "video"]
-emits = ["clip", "visual.category"]
+emits = ["clip", "visual.category", "visual.genre"]
 depends_on = []
 model_id = "openai/clip-vit-base-patch32"
 description = "CLIP image, keyframe, and optional zero-shot embeddings over HTTP"
@@ -40,5 +40,11 @@ facetable = false
 [plugin.namespaces."visual.category"]
 display_name = "Visual categories"
 description = "Local zero-shot tags for format, subject, activity, scene and style."
+value_type = "categorical"
+facetable = true
+
+[plugin.namespaces."visual.genre"]
+display_name = "Visual genre"
+description = "Local zero-shot genre, meme and program-type suggestions."
 value_type = "categorical"
 facetable = true

@@ -27,6 +27,7 @@ from .errors import NotFoundError
 from .util import setup_logging, utcnow, utcnow_iso
 
 if TYPE_CHECKING:  # pragma: no cover - the facade stays cheap to import
+    from .filters import Vocabulary
     from .plugins import BackfillResult, PluginRegistry
     from .search import Query, SearchResult
 
@@ -192,10 +193,17 @@ class MediaEngine:
         plugin_ids: Sequence[str] | None = None,
         *,
         limit: int | None = None,
+        media_types: Sequence[str] | None = None,
+        retry_failed: bool = False,
         progress: ProgressCallback | None = None,
         cancel: CancelToken | None = None,
     ) -> "BackfillResult":
-        """Run analyzers over the library via the task queue. Blocks."""
+        """Run analyzers over the library via the task queue. Blocks.
+
+        ``media_types`` and ``limit`` scope the sweep; ``retry_failed`` revives
+        tasks that gave up earlier, which is the normal recovery path after a
+        model server was down.
+        """
         from .plugins import PluginRunner
 
         runner = PluginRunner(
@@ -205,16 +213,41 @@ class MediaEngine:
             progress=progress,
             cancel=self._cancel if cancel is None else cancel,
         )
-        return runner.run(list(plugin_ids) if plugin_ids else None, limit=limit)
+        return runner.run(
+            list(plugin_ids) if plugin_ids else None,
+            limit=limit,
+            media_types=media_types,
+            retry_failed=retry_failed,
+        )
+
+    def vocabulary(self) -> "Vocabulary":
+        """The search vocabulary contributed by the installed filter packs.
+
+        Rebuilt from the registry rather than cached on the engine, because
+        installing a pack must change what the search box understands without
+        a restart.
+        """
+        from .filters import build_vocabulary
+
+        self.start()
+        return build_vocabulary(self.plugins.packs.values())
 
     def search(self, query: "Query | str", *, with_facets: bool = True) -> "SearchResult":
-        """Execute a search; accepts a Query or the shared string syntax."""
+        """Execute a search; accepts a Query or the shared string syntax.
+
+        String queries are parsed against the installed packs' vocabulary, so
+        ``sport:footy`` and ``footy`` both work the moment the sports pack is
+        installed and neither means anything before that.
+        """
         from .search import Query, SearchPlanner, parse_query
 
         self.start()
-        parsed = parse_query(query) if isinstance(query, str) else query
+        words = self.vocabulary()
+        parsed = parse_query(query, vocabulary=words) if isinstance(query, str) else query
         assert isinstance(parsed, Query)  # noqa: S101 - narrows the union for mypy
-        return SearchPlanner(self.repos).search(parsed, with_facets=with_facets)
+        return SearchPlanner(self.repos, synonyms=words.expand).search(
+            parsed, with_facets=with_facets
+        )
 
     # ── reads ───────────────────────────────────────────────────────────────
 
@@ -342,6 +375,30 @@ class MediaEngine:
             )
         )
 
+    def remove_indexed_root(self, root: Path | str) -> dict[str, int]:
+        """Forget one library root without ever modifying its original files.
+
+        File-location rows below the root are removed. Assets that still have a
+        location elsewhere remain intact; truly orphaned assets and their
+        disposable derivatives are then garbage-collected.
+        """
+        self.start()
+        affected, removed_files = self.repos.assets.delete_files_under(str(Path(root).resolve()))
+        removed_assets = 0
+        removed_derivatives = 0
+        for asset_id in affected:
+            if self.repos.assets.files_for_asset(asset_id):
+                continue
+            removed_derivatives += self.purge_asset_derivatives(asset_id)
+            if self.repos.assets.delete_asset(asset_id):
+                removed_assets += 1
+        return {
+            "affected_assets": len(affected),
+            "removed_files": removed_files,
+            "removed_assets": removed_assets,
+            "removed_derivatives": removed_derivatives,
+        }
+
     def face_match_suggestions(
         self, *, status: str = "pending", limit: int = 200
     ) -> list[dict[str, Any]]:
@@ -354,6 +411,120 @@ class MediaEngine:
         """Apply one explicit human accept/reject decision."""
         self.start()
         return self.repos.reference_faces.review(suggestion_id, accept=accept)
+
+    def cluster_faces(
+        self,
+        *,
+        threshold: float = 0.72,
+        min_cluster_size: int = 2,
+        limit_per_model: int = 250_000,
+    ) -> dict[str, Any]:
+        """Group local face embeddings into unnamed, human-reviewable people."""
+        from .identity import FaceClusterer
+
+        self.start()
+        return FaceClusterer(self.repos).run(
+            threshold=threshold,
+            min_cluster_size=min_cluster_size,
+            limit_per_model=limit_per_model,
+        ).as_dict()
+
+    def face_cluster_suggestions(self, *, limit: int = 200) -> list[dict[str, Any]]:
+        self.start()
+        return self.repos.identities.cluster_review_queue(limit=limit)
+
+    def face_cluster_regions(self, cluster_id: int, *, limit: int = 500) -> list[dict[str, Any]]:
+        self.start()
+        return self.repos.identities.regions_for_cluster(cluster_id, limit=limit)
+
+    def name_face_cluster(self, cluster_id: int, display_name: str) -> dict[str, Any]:
+        """Apply one user's name to a suggested group and refresh people search."""
+        self.start()
+        result = self.repos.identities.name_cluster(cluster_id, display_name)
+        pipeline = self.pipeline()
+        for asset_id in result["asset_ids"]:
+            pipeline.reindex_asset(int(asset_id))
+        return result
+
+    def profile_providers(self) -> list[dict[str, object]]:
+        from .profiles import profile_providers
+
+        return profile_providers()
+
+    def identity_profiles(self, identity_id: int) -> list[dict[str, Any]]:
+        self.start()
+        return self.repos.identity_profiles.profiles(identity_id)
+
+    def link_identity_profile(
+        self,
+        identity_id: int,
+        *,
+        provider: str,
+        handle: str | None = None,
+        profile_url: str | None = None,
+        display_label: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        from .profiles import resolve_profile_link
+
+        self.start()
+        provider_id, clean_handle, url = resolve_profile_link(
+            provider, handle=handle, profile_url=profile_url
+        )
+        return self.repos.identity_profiles.add_profile(
+            identity_id,
+            provider=provider_id,
+            handle=clean_handle,
+            profile_url=url,
+            display_label=display_label,
+            metadata=metadata,
+        )
+
+    def unlink_identity_profile(self, identity_id: int, profile_id: int) -> bool:
+        self.start()
+        return self.repos.identity_profiles.delete_profile(identity_id, profile_id)
+
+    def search_wikipedia_for_identity(
+        self, identity_id: int, *, language: str = "en", limit: int = 5
+    ) -> list[dict[str, Any]]:
+        from .errors import CapabilityDenied, NotFoundError
+        from .profiles.wikipedia import WikipediaClient
+
+        self.start()
+        if not self.config.plugins.allow_network:
+            raise CapabilityDenied("Wikipedia lookup requires plugins.allow_network=true")
+        identity = self.repos.identities.get_identity(identity_id)
+        if identity is None:
+            raise NotFoundError(f"identity {identity_id} does not exist")
+        return WikipediaClient().search(
+            str(identity["display_name"]), language=language, limit=limit
+        )
+
+    def attach_wikipedia_biography(
+        self, identity_id: int, page_title: str, *, language: str = "en"
+    ) -> dict[str, Any]:
+        from .errors import CapabilityDenied, NotFoundError
+        from .profiles.wikipedia import WikipediaClient
+
+        self.start()
+        if not self.config.plugins.allow_network:
+            raise CapabilityDenied("Wikipedia lookup requires plugins.allow_network=true")
+        if self.repos.identities.get_identity(identity_id) is None:
+            raise NotFoundError(f"identity {identity_id} does not exist")
+        biography = WikipediaClient().biography(page_title, language=language)
+        return self.repos.identity_profiles.save_biography(identity_id, biography)
+
+    def identity_biographies(self, identity_id: int) -> list[dict[str, Any]]:
+        self.start()
+        return self.repos.identity_profiles.biographies(identity_id)
+
+    def delete_identity_biography(
+        self, identity_id: int, *, provider: str = "wikipedia", language: str = "en"
+    ) -> bool:
+        self.start()
+        return self.repos.identity_profiles.delete_biography(
+            identity_id, provider=provider, language=language
+        )
 
     def record_note(self, key: str, value: str) -> None:
         """Store a small piece of engine state. Used by the CLI and the API."""

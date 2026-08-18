@@ -60,12 +60,26 @@ class FilterDefinition:
     def __post_init__(self) -> None:
         if not self.key or any(char.isspace() for char in self.key):
             raise SheetError(f"invalid filter key: {self.key!r}")
+        if not self.label.strip():
+            raise SheetError(f"filter {self.key!r} has no label")
         if not self.field:
             raise SheetError(f"filter {self.key!r} has no backend field")
         if not self.operators:
             raise SheetError(f"filter {self.key!r} has no operators")
+        if any(not value.strip() for value in self.operators):
+            raise SheetError(f"filter {self.key!r} has an empty operator")
+        if len(set(self.operators)) != len(self.operators):
+            raise SheetError(f"filter {self.key!r} has duplicate operators")
         if self.value_type is ValueType.ENUM and not self.choices:
             raise SheetError(f"enum filter {self.key!r} must declare choices")
+        if len(set(self.choices)) != len(self.choices):
+            raise SheetError(f"filter {self.key!r} has duplicate choices")
+        if any(not alias or any(char.isspace() for char in alias) for alias in self.aliases):
+            raise SheetError(f"filter {self.key!r} has an invalid alias")
+        if len(set(self.aliases)) != len(self.aliases):
+            raise SheetError(f"filter {self.key!r} has duplicate aliases")
+        if not self.capability.strip():
+            raise SheetError(f"filter {self.key!r} has no capability")
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,6 +93,18 @@ class SortDefinition:
     default_direction: str = "desc"
     enabled: bool = True
 
+    def __post_init__(self) -> None:
+        if not self.key or any(char.isspace() for char in self.key):
+            raise SheetError(f"invalid sort key: {self.key!r}")
+        if not self.label.strip() or not self.field.strip():
+            raise SheetError(f"sort {self.key!r} requires a label and backend field")
+        if not self.directions or any(value not in {"asc", "desc"} for value in self.directions):
+            raise SheetError(f"sort {self.key!r} has invalid directions")
+        if len(set(self.directions)) != len(self.directions):
+            raise SheetError(f"sort {self.key!r} has duplicate directions")
+        if self.default_direction not in self.directions:
+            raise SheetError(f"sort {self.key!r} default direction is not allowed")
+
 
 @dataclass(frozen=True, slots=True)
 class OperationDefinition:
@@ -90,6 +116,16 @@ class OperationDefinition:
     summary: str
     capability: str
     enabled: bool = True
+
+    def __post_init__(self) -> None:
+        if not self.operation_id or any(char.isspace() for char in self.operation_id):
+            raise SheetError(f"invalid operation id: {self.operation_id!r}")
+        if self.method not in {"DELETE", "GET", "PATCH", "POST", "PUT", "WS"}:
+            raise SheetError(f"operation {self.operation_id!r} has an invalid transport method")
+        if not self.path.startswith("/") or any(char.isspace() for char in self.path):
+            raise SheetError(f"operation {self.operation_id!r} has an invalid path")
+        if not self.summary.strip() or not self.capability.strip():
+            raise SheetError(f"operation {self.operation_id!r} requires summary and capability")
 
 
 @dataclass(frozen=True, slots=True)
@@ -106,6 +142,12 @@ class FilterClause:
 
         if not isinstance(data, Mapping):
             raise QueryError("filter clause must be an object")
+        unexpected = set(data) - {"key", "operator", "value"}
+        if unexpected:
+            raise QueryError(
+                "filter clause contains unknown fields: "
+                + ", ".join(sorted(str(key) for key in unexpected))
+            )
         try:
             key = data["key"]
             operator = data["operator"]
@@ -141,6 +183,12 @@ class QueryGroup:
 
         if not isinstance(data, Mapping):
             raise QueryError("query group must be an object")
+        unexpected = set(data) - {"operator", "clauses", "groups"}
+        if unexpected:
+            raise QueryError(
+                "query group contains unknown fields: "
+                + ", ".join(sorted(str(key) for key in unexpected))
+            )
         # Enforce an absolute parser safety ceiling before recursion. The
         # registry's usually-smaller max_boolean_depth is enforced by the
         # planner after parsing.
@@ -195,6 +243,21 @@ class SearchRequest:
 
         if not isinstance(data, Mapping):
             raise QueryError("search request must be an object")
+        unexpected = set(data) - {
+            "text",
+            "where",
+            "sort",
+            "direction",
+            "page_size",
+            "cursor",
+            "include_facets",
+            "facet_namespaces",
+        }
+        if unexpected:
+            raise QueryError(
+                "search request contains unknown fields: "
+                + ", ".join(sorted(str(key) for key in unexpected))
+            )
         where_raw = data.get("where", {})
         if not isinstance(where_raw, Mapping):
             raise QueryError("where must be an object")
@@ -203,6 +266,8 @@ class SearchRequest:
             raise QueryError("facet_namespaces must be an array")
         if any(not isinstance(value, str) or not value.strip() for value in namespaces):
             raise QueryError("facet_namespaces must contain non-empty strings")
+        if len(namespaces) > 100:
+            raise QueryError("facet_namespaces cannot contain more than 100 values")
 
         text = data.get("text")
         sort = data.get("sort")
@@ -233,7 +298,7 @@ class SearchRequest:
             page_size=raw_page_size,
             cursor=cursor,
             include_facets=include_facets,
-            facet_namespaces=tuple(namespaces),
+            facet_namespaces=tuple(dict.fromkeys(value.strip() for value in namespaces)),
         )
 
 

@@ -23,13 +23,13 @@ from tkinter import (
     END,
     LEFT,
     RIGHT,
-    VERTICAL,
     BooleanVar,
     Listbox,
     Menu,
     StringVar,
     Text,
     Tk,
+    TclError,
     Toplevel,
     filedialog,
     messagebox,
@@ -49,7 +49,10 @@ from ..util import human_bytes, setup_logging
 from .appearance import (
     THEMES,
     GradientHeader,
+    ModernButton,
+    ModernScrollbar,
     PlaceholderEntry,
+    StatCard,
     UISettings,
     load_ui_settings,
     mix_color,
@@ -64,9 +67,9 @@ def format_bytes(value: object) -> str:
     """Format an arbitrary database value as a human-readable byte count."""
     try:
         if value is None:
-            return cast(str, human_bytes(0))
+            return human_bytes(0)
         if isinstance(value, (int, float, str)):
-            return cast(str, human_bytes(float(value)))
+            return human_bytes(float(value))
         return "—"
     except (TypeError, ValueError):
         return "—"
@@ -123,7 +126,9 @@ class FileIndexerV1:
         self.current_page = "library"
         self.compact_layout = False
         self.resize_job: str | None = None
-        self.stats_cards: list[ttk.Frame] = []
+        self.stats_cards: list[StatCard] = []
+        self.modern_scrollbars: list[ModernScrollbar] = []
+        self.modern_buttons: list[ModernButton] = []
         self.custom_text_widgets: list[Any] = []
         self.nav_labels = {
             "library": ("Library", "▦"),
@@ -224,6 +229,23 @@ class FileIndexerV1:
         self.style.map("TCheckbutton", background=[("active", t.bg)])
         self.style.configure("TScale", background=t.bg, troughcolor=t.panel_alt)
         self.style.configure("TSeparator", background=t.border)
+        self.style.configure("TPanedwindow", background=t.bg, sashwidth=8)
+        if t.chrome == "neo":
+            # Neo deliberately gets its own component treatment.  The classic
+            # palettes continue to use the established V1 metrics above.
+            self.style.configure("TButton", background=t.panel_alt, foreground=t.text, padding=(15, button_y + 1), font=("Segoe UI Semibold", size(9)))
+            self.style.map("TButton", background=[("active", t.selection), ("pressed", t.border)])
+            self.style.configure("Accent.TButton", background=t.accent, foreground="#ffffff", padding=(17, button_y + 2), font=("Segoe UI Semibold", size(9)))
+            self.style.configure("Quiet.TButton", background=t.bg, foreground=t.muted, padding=(10, button_y))
+            self.style.configure("Chip.TButton", background=t.raised, foreground=t.text, padding=(13, 6), borderwidth=1, bordercolor=t.border)
+            self.style.configure("TEntry", fieldbackground=t.panel, foreground=t.text, insertcolor=t.text, bordercolor=t.border, lightcolor=t.border, darkcolor=t.border, padding=(13, 11))
+            self.style.configure("Placeholder.TEntry", fieldbackground=t.panel, foreground=t.muted, insertcolor=t.muted, bordercolor=t.border, padding=(13, 11))
+            self.style.configure("TCombobox", fieldbackground=t.panel, background=t.panel, foreground=t.text, arrowcolor=t.accent, bordercolor=t.border, padding=(10, 8))
+            self.style.configure("Treeview", rowheight=round(max(36, density) * self.scale), borderwidth=0, font=("Segoe UI", size(9)))
+            self.style.configure("Treeview.Heading", background=t.panel_alt, foreground=t.muted, relief="flat", padding=(10, 11), font=("Segoe UI Semibold", size(8)))
+            self.style.configure("TNotebook", background=t.bg, borderwidth=0, tabmargins=(0, 0, 0, 0))
+            self.style.configure("TNotebook.Tab", background=t.bg, foreground=t.muted, padding=(18, 11), borderwidth=0)
+            self.style.map("TNotebook.Tab", background=[("selected", t.panel)], foreground=[("selected", t.accent)])
 
     def _build_shell(self) -> None:
         self.header = GradientHeader(
@@ -291,7 +313,8 @@ class FileIndexerV1:
         )
         self.search_entry.grid(row=0, column=0, sticky="ew")
         self.search_entry.bind("<Return>", lambda _: self.run_search(reset=True))
-        self.search_clear_button = ttk.Button(self.library_toolbar, text="Clear", style="Quiet.TButton", command=self.clear_search)
+        self.search_clear_button = ModernButton(self.library_toolbar, self.theme, "Clear", self.clear_search, variant="quiet", scale=self.scale)
+        self.modern_buttons.append(self.search_clear_button)
         self.search_clear_button.grid(row=0, column=1, padx=(6, 0))
         self.type_selector = ttk.Combobox(
             self.library_toolbar,
@@ -302,14 +325,18 @@ class FileIndexerV1:
         )
         self.type_selector.grid(row=0, column=2, padx=7)
         self.type_selector.bind("<<ComboboxSelected>>", lambda _: self.run_search(reset=True))
-        self.search_button = ttk.Button(self.library_toolbar, text="Search", command=lambda: self.run_search(reset=True))
+        self.search_button = ModernButton(self.library_toolbar, self.theme, "Search", lambda: self.run_search(reset=True), scale=self.scale)
+        self.modern_buttons.append(self.search_button)
         self.search_button.grid(row=0, column=3)
-        self.add_scan_button = ttk.Button(self.library_toolbar, text="Add & scan folder", style="Accent.TButton", command=self.choose_scan_folder)
+        self.add_scan_button = ModernButton(self.library_toolbar, self.theme, "Add & scan folder", self.choose_scan_folder, variant="primary", scale=self.scale)
+        self.modern_buttons.append(self.add_scan_button)
         self.add_scan_button.grid(row=0, column=4, padx=(7, 0))
 
         self.quick_filters = ttk.Frame(page)
         self.quick_filters.pack(fill="x", pady=(0, 12))
-        ttk.Label(self.quick_filters, text="Try", style="Muted.TLabel").pack(side=LEFT, padx=(1, 8))
+        self.quick_filter_label = ttk.Label(self.quick_filters, text="Try", style="Muted.TLabel")
+        self.quick_filter_label.grid(row=0, column=0, sticky="w", padx=(1, 8))
+        self.quick_filter_buttons: list[ModernButton] = []
         for label, query in (
             ("Recent", "after:2025 sort:-captured"),
             ("Images", "type:image"),
@@ -317,13 +344,21 @@ class FileIndexerV1:
             ("With location", "has:gps"),
             ("Favorites", "user.label:favorite"),
         ):
-            ttk.Button(
+            button = ModernButton(
                 self.quick_filters,
+                self.theme,
                 text=label,
-                style="Chip.TButton",
                 command=partial(self.apply_quick_search, query),
-            ).pack(side=LEFT, padx=(0, 6))
-        ttk.Button(self.quick_filters, text="Search tips", style="Quiet.TButton", command=self.open_help).pack(side=RIGHT)
+                variant="chip",
+                scale=self.scale,
+            )
+            button.grid(row=0, column=len(self.quick_filter_buttons) + 1, padx=(0, 6), sticky="ew")
+            self.quick_filter_buttons.append(button)
+            self.modern_buttons.append(button)
+        self.quick_filter_tips = ModernButton(self.quick_filters, self.theme, "Search tips", self.open_help, variant="quiet", scale=self.scale)
+        self.modern_buttons.append(self.quick_filter_tips)
+        self.quick_filter_tips.grid(row=0, column=6, sticky="e")
+        self.quick_filters.columnconfigure(6, weight=1)
 
         self.cards_container = ttk.Frame(page)
         self.cards_container.pack(fill="x", pady=(0, 12))
@@ -334,15 +369,12 @@ class FileIndexerV1:
             ("videos", "Videos", "MOTION"),
             ("documents", "Documents", "TEXT"),
         )):
-            card = ttk.Frame(self.cards_container, style="Panel.TFrame", padding=(16, 11))
+            value = StringVar(value="—")
+            self.card_values[key] = value
+            card = StatCard(self.cards_container, self.theme, value, label, eyebrow, scale=self.scale)
             card.grid(row=0, column=index, sticky="nsew", padx=(0, 8) if index < 3 else 0)
             self.cards_container.columnconfigure(index, weight=1, uniform="stats")
             self.stats_cards.append(card)
-            value = StringVar(value="—")
-            self.card_values[key] = value
-            ttk.Label(card, text=eyebrow, style="CardAccent.TLabel").pack(anchor="w")
-            ttk.Label(card, textvariable=value, style="CardValue.TLabel").pack(anchor="w")
-            ttk.Label(card, text=label, style="CardLabel.TLabel").pack(anchor="w")
 
         self.library_paned = ttk.Panedwindow(page, orient="horizontal")
         self.library_paned.pack(fill=BOTH, expand=True)
@@ -363,7 +395,8 @@ class FileIndexerV1:
             self.results.heading(column, text=label)
             tree_anchor = cast(Literal["w", "center", "e"], anchor)
             self.results.column(column, width=width, minwidth=55, anchor=tree_anchor)
-        scroll = ttk.Scrollbar(self.results_panel, orient=VERTICAL, command=self.results.yview)
+        scroll = ModernScrollbar(self.results_panel, self.results.yview, self.theme, scale=self.scale)
+        self.modern_scrollbars.append(scroll)
         self.results.configure(yscrollcommand=scroll.set)
         scroll.pack(side=RIGHT, fill="y")
         self.results.pack(fill=BOTH, expand=True)
@@ -419,11 +452,19 @@ class FileIndexerV1:
         for col, label, width in (("id", "ID", 55), ("root", "Folder", 360), ("state", "State", 90), ("seen", "Seen", 75), ("new", "New", 75), ("errors", "Errors", 70), ("started", "Started", 170)):
             self.scans_tree.heading(col, text=label)
             self.scans_tree.column(col, width=width, anchor="w")
+        scans_scroll = ModernScrollbar(scans_frame, self.scans_tree.yview, self.theme, scale=self.scale)
+        self.modern_scrollbars.append(scans_scroll)
+        self.scans_tree.configure(yscrollcommand=scans_scroll.set)
+        scans_scroll.pack(side=RIGHT, fill="y")
         self.scans_tree.pack(fill=BOTH, expand=True)
         self.errors_tree = ttk.Treeview(errors_frame, columns=("time", "scope", "kind", "item", "message"), show="headings")
         for col, label, width in (("time", "Time", 160), ("scope", "Scope", 70), ("kind", "Kind", 130), ("item", "Item", 260), ("message", "Message", 420)):
             self.errors_tree.heading(col, text=label)
             self.errors_tree.column(col, width=width, anchor="w")
+        errors_scroll = ModernScrollbar(errors_frame, self.errors_tree.yview, self.theme, scale=self.scale)
+        self.modern_scrollbars.append(errors_scroll)
+        self.errors_tree.configure(yscrollcommand=errors_scroll.set)
+        errors_scroll.pack(side=RIGHT, fill="y")
         self.errors_tree.pack(fill=BOTH, expand=True)
         self.errors_tree.bind("<Double-1>", self._show_error)
         return page
@@ -444,6 +485,10 @@ class FileIndexerV1:
         for col, label, width in (("id", "Analyzer", 210), ("version", "Version", 80), ("kind", "Kind", 110), ("enabled", "Enabled", 75), ("state", "Tasks", 150), ("description", "Description", 400)):
             self.plugins_tree.heading(col, text=label)
             self.plugins_tree.column(col, width=width, anchor="w")
+        plugins_scroll = ModernScrollbar(page, self.plugins_tree.yview, self.theme, scale=self.scale)
+        self.modern_scrollbars.append(plugins_scroll)
+        self.plugins_tree.configure(yscrollcommand=plugins_scroll.set)
+        plugins_scroll.pack(side=RIGHT, fill="y")
         self.plugins_tree.pack(fill=BOTH, expand=True)
         return page
 
@@ -462,10 +507,11 @@ class FileIndexerV1:
         appearance.pack(fill="x")
         ttk.Label(appearance, text="Workspace appearance", style="Panel.TLabel", font=("Segoe UI Semibold", round(14 * self.scale))).grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 4))
         ttk.Label(appearance, text="Changes preview immediately and persist for the next launch.", style="PanelMuted.TLabel").grid(row=1, column=0, columnspan=3, sticky="w", pady=(0, 16))
-        ttk.Label(appearance, text="Color theme", style="PanelMuted.TLabel").grid(row=2, column=0, sticky="w", pady=6)
+        ttk.Label(appearance, text="Interface style", style="PanelMuted.TLabel").grid(row=2, column=0, sticky="w", pady=6)
         themes = ttk.Combobox(appearance, textvariable=self.theme_var, values=tuple(THEMES), state="readonly", width=24)
         themes.grid(row=2, column=1, sticky="w", pady=6)
         themes.bind("<<ComboboxSelected>>", lambda _: self.preview_appearance())
+        ttk.Label(appearance, text="V1 Neo is opt-in; the original four styles are unchanged.", style="PanelMuted.TLabel").grid(row=2, column=2, sticky="w", padx=(12, 0), pady=6)
         ttk.Label(appearance, text="Text size", style="PanelMuted.TLabel").grid(row=3, column=0, sticky="w", pady=6)
         scale_choices = ttk.Combobox(appearance, textvariable=self.text_scale_var, values=("85", "90", "100", "110", "120", "130", "140"), state="readonly", width=10)
         scale_choices.grid(row=3, column=1, sticky="w", pady=6)
@@ -677,6 +723,36 @@ class FileIndexerV1:
             self.add_scan_button.grid(row=0, column=4, padx=(7, 0), pady=0)
             self.results.configure(displaycolumns=("name", "type", "size", "date", "dimensions"))
 
+        for column in range(7):
+            self.quick_filters.columnconfigure(column, weight=0)
+        self.quick_filter_label.grid_forget()
+        self.quick_filter_tips.grid_forget()
+        for quick_button in self.quick_filter_buttons:
+            quick_button.grid_forget()
+        if width >= 1060:
+            self.quick_filter_label.grid(row=0, column=0, sticky="w", padx=(1, 8))
+            for index, quick_button in enumerate(self.quick_filter_buttons, start=1):
+                quick_button.grid(row=0, column=index, padx=(0, 6), sticky="ew")
+            self.quick_filter_tips.grid(row=0, column=6, sticky="e")
+            self.quick_filters.columnconfigure(6, weight=1)
+        else:
+            filter_columns = 3 if self.scale >= 1.2 else 5
+            for index, quick_button in enumerate(self.quick_filter_buttons):
+                row, column = divmod(index, filter_columns)
+                quick_button.grid(row=row, column=column, padx=(0, 6), pady=(0, 6), sticky="ew")
+            for column in range(filter_columns):
+                self.quick_filters.columnconfigure(column, weight=1, uniform="quick-filters")
+
+        # Tk paned windows remember an absolute sash coordinate.  Recalculate
+        # it after every responsive pass so the inspector can never crush the
+        # results table when the window or text scale changes.
+        pane_width = max(1, self.library_paned.winfo_width())
+        target = round(pane_width * (0.58 if compact else 0.66))
+        try:
+            cast(Any, self.library_paned).sashpos(0, max(280, min(pane_width - 260, target)))
+        except TclError:
+            pass
+
         available = max(360, self.results_panel.winfo_width() - 35)
         self.results.column("name", width=max(190, round(available * 0.40)))
         self.results.column("type", width=max(68, round(available * 0.10)))
@@ -806,6 +882,12 @@ class FileIndexerV1:
             highlightbackground=self.theme.border,
             font=("Segoe UI", max(9, round(10 * self.scale))),
         )
+        for card in self.stats_cards:
+            card.apply_theme(self.theme, self.scale)
+        for scrollbar in self.modern_scrollbars:
+            scrollbar.apply_theme(self.theme, self.scale)
+        for button in self.modern_buttons:
+            button.apply_theme(self.theme, self.scale)
         self._apply_responsive_layout()
 
     def save_appearance(self) -> None:
@@ -982,11 +1064,8 @@ class FileIndexerV1:
             return
 
         def work() -> int:
-            annotation_id = cast(
-                int,
-                self.engine.repos.annotations.add_user_annotation(
-                    int(row["id"]), "user.label", label
-                ),
+            annotation_id = self.engine.repos.annotations.add_user_annotation(
+                int(row["id"]), "user.label", label
             )
             self.engine.pipeline().reindex_asset(int(row["id"]))
             return annotation_id
@@ -1158,11 +1237,8 @@ class FileIndexerV1:
         def work() -> dict[str, object]:
             from ..plugins import PluginManager
 
-            return cast(
-                dict[str, object],
-                PluginManager(self.engine).set_enabled(
-                    plugin_id, enable, grant_network=grant_network
-                ),
+            return PluginManager(self.engine).set_enabled(
+                plugin_id, enable, grant_network=grant_network
             )
 
         def done(_: dict[str, object]) -> None:
@@ -1323,8 +1399,39 @@ class FileIndexerV1:
 
     def remove_root(self) -> None:
         selected = list(self.roots_list.curselection())  # type: ignore[no-untyped-call]
+        if not selected:
+            messagebox.showinfo("Remove a folder", "Select one or more library folders first.")
+            return
+        roots = [Path(self.roots_list.get(index)).resolve() for index in selected]
+        detail = "\n".join(str(root) for root in roots[:4])
+        if len(roots) > 4:
+            detail += f"\n…and {len(roots) - 4} more"
+        if not messagebox.askyesno(
+            "Remove from File Indexer?",
+            f"Stop watching and forget index/cache entries for:\n\n{detail}\n\n"
+            "Original files will never be deleted.",
+        ):
+            return
         for index in reversed(selected):
             self.roots_list.delete(index)
+        self.config.library.roots = [
+            Path(item).resolve() for item in self.roots_list.get(0, END)
+        ]
+        save_desktop_config(self.config)
+
+        def work() -> list[dict[str, int]]:
+            return [self.engine.remove_indexed_root(root) for root in roots]
+
+        def done(results: list[dict[str, int]]) -> None:
+            removed_files = sum(item.get("removed_files", 0) for item in results)
+            removed_assets = sum(item.get("removed_assets", 0) for item in results)
+            self.progress_text.set(
+                f"Folder removed · {removed_files:,} file entries · {removed_assets:,} unused items"
+            )
+            self.refresh_all()
+
+        self.progress_text.set("Removing folder from the index…")
+        self._run_background("folder removal", work, done)
 
     def choose_database(self) -> None:
         selected = filedialog.asksaveasfilename(title="Choose index database", defaultextension=".db", filetypes=(("SQLite database", "*.db"), ("All files", "*.*")), initialfile="library.db")

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import colorsys
 from collections.abc import Sequence
+from typing import cast
 
 from ..contract import Annotation, PluginInfo
 from ..context import AnalysisContext
@@ -71,7 +72,12 @@ class StubClassifier:
         small = image.resize((32, 32))
         votes: dict[str, int] = {}
         total = 0
-        for r, g, b in small.getdata():
+        # getdata() is typed as returning opaque image data; for an RGB image
+        # it yields (r, g, b) triples, which is what this loop needs.
+        pixels: Sequence[tuple[int, int, int]] = cast(
+            "Sequence[tuple[int, int, int]]", small.getdata()
+        )
+        for r, g, b in pixels:
             h, s, v = colorsys.rgb_to_hsv(r / 255.0, g / 255.0, b / 255.0)
             if v < 0.16:
                 name = "black"

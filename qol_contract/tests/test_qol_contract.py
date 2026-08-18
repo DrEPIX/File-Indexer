@@ -1,13 +1,22 @@
 from __future__ import annotations
 
+import base64
+import json
+import sqlite3
 import unittest
 from pathlib import Path
 from typing import Any, Mapping
 
-from mediaengine_qol.errors import QueryError
+from mediaengine_qol.errors import QueryError, SheetError
 from mediaengine_qol.facade import QoLService
 from mediaengine_qol.mediaengine_backend import MediaEngineBackend
-from mediaengine_qol.models import GroupOperator, PlannedGroup, SearchPlan, SearchRequest
+from mediaengine_qol.models import (
+    GroupOperator,
+    PlannedGroup,
+    SearchPlan,
+    SearchRequest,
+    SortDefinition,
+)
 from mediaengine_qol.planner import QueryPlanner
 from mediaengine_qol.registry import SurfaceRegistry
 from mediaengine_qol.schema import search_request_schema
@@ -112,6 +121,48 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(schema["properties"]["sort"]["default"], "captured")
         self.assertEqual(schema["properties"]["page_size"]["maximum"], 500)
 
+    def test_registry_manifest_is_isolated_and_declarations_are_validated(self) -> None:
+        manifest = self.registry.manifest()
+        manifest["settings"]["search"]["max_page_size"] = 1
+        self.assertEqual(self.registry.settings["search"]["max_page_size"], 500)
+
+        with self.assertRaises(SheetError):
+            SortDefinition(
+                key="broken",
+                label="Broken",
+                field="assets.id",
+                directions=("sideways",),
+                default_direction="sideways",
+            )
+        with self.assertRaises(SheetError):
+            SurfaceRegistry(
+                filters=(),
+                sorts=self.registry.sorts.values(),
+                operations=(),
+                settings={"search": {"default_page_size": True}},
+            )
+        with self.assertRaisesRegex(SheetError, "operators must be an array"):
+            SurfaceRegistry._parse_filter(
+                {
+                    "key": "broken",
+                    "label": "Broken",
+                    "field": "assets.id",
+                    "type": "integer",
+                    "operators": "eq",
+                }
+            )
+        with self.assertRaisesRegex(SheetError, "facet must be a boolean"):
+            SurfaceRegistry._parse_filter(
+                {
+                    "key": "broken",
+                    "label": "Broken",
+                    "field": "assets.id",
+                    "type": "integer",
+                    "operators": ["eq"],
+                    "facet": "false",
+                }
+            )
+
     def test_sheet_controls_defaults_and_boolean_depth(self) -> None:
         registry = SurfaceRegistry(
             filters=self.registry.filters.values(),
@@ -145,14 +196,88 @@ class ContractTests(unittest.TestCase):
         malformed_requests = (
             {"where": {"clauses": [42]}},
             {"where": {"groups": ["not-an-object"]}},
+            {"surprise": True},
+            {"where": {"surprise": True}},
+            {"where": {"clauses": [{"key": "media.type", "operator": "eq", "extra": 1}]}},
             {"page_size": True},
             {"include_facets": "false"},
             {"facet_namespaces": ["valid", ""]},
+            {"facet_namespaces": ["valid"] * 101},
             {"text": {"unexpected": "object"}},
         )
         for request in malformed_requests:
             with self.subTest(request=request), self.assertRaises(QueryError):
                 SearchRequest.from_mapping(request)
+
+    def test_normalizes_qol_boundary_values(self) -> None:
+        backend = FakeBackend(frozenset({"structured", "facets"}))
+        service = QoLService(self.registry, backend)
+        service.search(
+            {
+                "text": "   ",
+                "facet_namespaces": [" demo ", "demo", "other"],
+            }
+        )
+        assert backend.last_plan is not None
+        self.assertIsNone(backend.last_plan.text)
+        self.assertNotIn("fts", backend.last_plan.required_capabilities)
+        self.assertEqual(backend.last_plan.facet_namespaces, ("demo", "other"))
+        with self.assertRaises(ValueError):
+            service.asset(True)
+        with self.assertRaises(ValueError):
+            service.facets("   ")
+
+    def test_cursor_and_nullable_sql_are_strict(self) -> None:
+        for payload in (
+            {"offset": True},
+            {"offset": 1.5},
+            {"offset": 2**63},
+            {"offset": 1, "unexpected": True},
+            [1],
+        ):
+            encoded = base64.urlsafe_b64encode(
+                json.dumps(payload).encode("utf-8")
+            ).decode("ascii").rstrip("=")
+            with self.subTest(payload=payload), self.assertRaises(QueryError):
+                MediaEngineBackend._decode_cursor(encoded)
+
+        params: list[Any] = []
+        self.assertEqual(
+            MediaEngineBackend._value_predicate("a.captured_at", "eq", None, params),
+            "a.captured_at IS NULL",
+        )
+        self.assertEqual(params, [])
+
+        path_params: list[Any] = []
+        path_sql = MediaEngineBackend._value_predicate(
+            "fx.path", "under", r"C:\Photos", path_params
+        )
+        self.assertIn("fx.path = ?", path_sql)
+        self.assertEqual(
+            path_params,
+            [r"C:\Photos", "C:\\\\Photos/%", "C:\\\\Photos\\\\%"],
+        )
+        connection = sqlite3.connect(":memory:")
+        try:
+            connection.execute("CREATE TABLE paths (path TEXT NOT NULL)")
+            connection.executemany(
+                "INSERT INTO paths VALUES (?)",
+                [
+                    (r"C:\Photos",),
+                    (r"C:\Photos\child.jpg",),
+                    (r"C:\Photos2\not-a-child.jpg",),
+                    ("C:\\Photos/portable-child.jpg",),
+                ],
+            )
+            matches = connection.execute(
+                f"SELECT path FROM paths fx WHERE {path_sql}", path_params
+            ).fetchall()
+            self.assertEqual(len(matches), 3)
+        finally:
+            connection.close()
+
+        with self.assertRaises(QueryError):
+            MediaEngineBackend._mtime_value("9999-12-31T23:59:59Z")
 
     def test_parser_depth_limit_runs_before_python_recursion_limit(self) -> None:
         nested: dict[str, Any] = {"clauses": []}

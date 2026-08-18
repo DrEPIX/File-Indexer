@@ -1,0 +1,121 @@
+# Which sport is on screen.
+#
+# Multi-label is off: a clip is one sport. Set `multi_label = true` in a copy
+# of this pack if your library has compilations that genuinely span several.
+
+[pack]
+id = "filters.sport"
+name = "Sports"
+display_name = "Sport"
+version = "1.0.0"
+namespace = "content.sport"
+method = "vision"
+accepts = ["video", "image"]
+multi_label = false
+threshold = 0.45
+description = "Identify which sport a video or photo shows."
+
+[[label]]
+# An explicit way to say "not sport". Without one, a model asked "which sport
+# is this" answers with the nearest sport rather than declining, and a desktop
+# recording ends up tagged esports. It is in `reject_labels`, so choosing it
+# records nothing.
+name = "none"
+display = "Not sport"
+hint = "no sport at all — desktop or screen recordings, talking heads, scenery, pets, meals, anything that is not athletic or competitive play"
+
+[[label]]
+name = "football"
+display = "Football (soccer)"
+aliases = ["soccer", "footy", "futbol", "fussball", "premier league", "la liga", "ucl"]
+hint = "green pitch with white markings, goal nets, two teams, a round ball"
+
+[[label]]
+name = "american-football"
+display = "American football"
+aliases = ["nfl", "gridiron", "college football"]
+hint = "yard lines and hash marks, helmets and shoulder pads, oval ball, end zones"
+
+[[label]]
+name = "basketball"
+display = "Basketball"
+aliases = ["nba", "hoops", "bball", "wnba"]
+hint = "indoor wooden court, backboard and hoop, orange ball, shot clock"
+
+[[label]]
+name = "baseball"
+display = "Baseball"
+aliases = ["mlb", "softball"]
+hint = "diamond infield, pitcher's mound, bat and mitt, catcher behind home plate"
+
+[[label]]
+name = "ice-hockey"
+display = "Ice hockey"
+aliases = ["nhl", "hockey", "puck"]
+hint = "white ice rink with blue and red lines, boards and glass, sticks and a puck"
+
+[[label]]
+name = "tennis"
+display = "Tennis"
+aliases = ["atp", "wta", "wimbledon", "padel"]
+hint = "rectangular court with a net at waist height, rackets, two or four players"
+
+[[label]]
+name = "combat-sports"
+display = "Combat sports"
+aliases = ["mma", "ufc", "boxing", "wrestling", "kickboxing", "bjj", "judo"]
+hint = "a ring or cage, gloves, two fighters, a referee in close"
+
+[[label]]
+name = "motorsport"
+display = "Motorsport"
+aliases = ["f1", "formula 1", "nascar", "motogp", "rally", "racing"]
+hint = "race cars or motorcycles on a circuit, pit lane, trackside barriers, timing graphics"
+
+[[label]]
+name = "cycling"
+display = "Cycling"
+aliases = ["bike racing", "tour de france", "bmx", "mtb"]
+hint = "road or track bicycles, peloton, helmets and lycra, follow vehicles"
+
+[[label]]
+name = "athletics"
+display = "Athletics"
+aliases = ["track and field", "running", "marathon", "sprint", "olympics"]
+hint = "red running track with lanes, field events, stadium infield"
+
+[[label]]
+name = "swimming"
+display = "Swimming and water sports"
+aliases = ["diving", "water polo", "surfing", "pool"]
+hint = "a lane-marked pool or open water, swimmers, starting blocks, or surf"
+
+[[label]]
+name = "golf"
+display = "Golf"
+aliases = ["pga", "masters"]
+hint = "manicured fairway and green, flagstick, clubs and a small white ball"
+
+[[label]]
+name = "cricket"
+display = "Cricket"
+aliases = ["test match", "t20", "ipl"]
+hint = "oval ground, central pitch strip with wickets, bat and pads, fielders spread wide"
+
+[[label]]
+name = "rugby"
+display = "Rugby"
+aliases = ["rugby union", "rugby league", "nrl", "six nations"]
+hint = "H-shaped posts, oval ball, scrums and rucks, no helmets or pads"
+
+[[label]]
+name = "esports"
+display = "Esports"
+aliases = ["competitive gaming", "tournament", "lan"]
+hint = "a competitive video game with tournament overlays, team names, and a bracket or scoreboard"
+
+[[label]]
+name = "extreme-sports"
+display = "Extreme sports"
+aliases = ["skateboarding", "snowboarding", "skiing", "parkour", "climbing"]
+hint = "skate parks, snow slopes, climbing walls, ramps and rails"

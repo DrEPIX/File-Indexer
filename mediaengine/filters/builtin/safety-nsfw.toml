@@ -1,0 +1,46 @@
+# Adult-content screening, for filtering a personal library.
+#
+# Policy, matching docs/AI_TAGGING.md: this pack labels, it never deletes,
+# moves, or hides anything. `safe` is a positive claim about media that was
+# actually examined, which is why `nsfw:safe` in the search box omits unrated
+# assets rather than assuming the best about them.
+#
+# Image classifiers are wrong in both directions — animation, medical imagery,
+# art, close crops, and unusual lighting all mislead them. Treat the label as a
+# screening aid with a review queue, never as the sole basis for an
+# irreversible action.
+
+[pack]
+id = "filters.safety-nsfw"
+name = "Adult content screening"
+display_name = "Content rating"
+version = "1.0.0"
+namespace = "safety.nsfw"
+method = "vision"
+accepts = ["video", "image"]
+multi_label = false
+# Deliberately low: an uncertain answer should still land in `review` rather
+# than fall through unrated and be treated as safe by a downstream filter.
+threshold = 0.2
+description = "Rate media safe, review, or flagged so adult content can be filtered out of everyday browsing."
+# `unknown` must not become a facet value here — an unrated asset is the
+# absence of a claim, not a third rating.
+reject_labels = ["unknown", "none", "other"]
+
+[[label]]
+name = "safe"
+display = "Safe"
+aliases = ["sfw", "clean", "work safe"]
+hint = "no nudity and no sexual content; ordinary clothed people, objects, places, text, or graphics"
+
+[[label]]
+name = "review"
+display = "Needs review"
+aliases = ["borderline", "suggestive", "uncertain"]
+hint = "suggestive or ambiguous: swimwear, underwear, lingerie, partial nudity, artistic or medical nudity, or too unclear to call"
+
+[[label]]
+name = "flagged"
+display = "Flagged"
+aliases = ["nsfw", "adult", "explicit", "porn"]
+hint = "explicit sexual activity or full frontal nudity presented sexually"

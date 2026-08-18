@@ -19,6 +19,7 @@ from PIL import Image, UnidentifiedImageError
 
 from model import (
     DEFAULT_CATEGORIES,
+    DEFAULT_GENRES,
     DEFAULT_LABELS,
     MODEL_ID,
     EncodedBatch,
@@ -29,7 +30,7 @@ from model import (
 
 PROTOCOL = "mediaengine.analyzer/1"
 PLUGIN_ID = "acme.clip"
-PLUGIN_VERSION = "1.2.0"
+PLUGIN_VERSION = "1.3.0"
 EXPECTED_EMBEDDING_DIM = 512
 
 
@@ -108,7 +109,7 @@ def manifest() -> dict[str, Any]:
         "model_id": MODEL_ID,
         "embedding_dim": EXPECTED_EMBEDDING_DIM,
         "accepts": ["image", "video"],
-        "emits": ["clip", "visual.category"],
+        "emits": ["clip", "visual.category", "visual.genre"],
         "depends_on": [],
         "transfer": "both",
         "requires": {
@@ -128,6 +129,12 @@ def manifest() -> dict[str, Any]:
             "visual.category": {
                 "display_name": "Visual categories",
                 "description": "Local zero-shot tags for format, subject, activity, scene and style.",
+                "value_type": "categorical",
+                "facetable": True,
+            },
+            "visual.genre": {
+                "display_name": "Visual genre",
+                "description": "Local zero-shot genre, meme and program-type suggestions.",
                 "value_type": "categorical",
                 "facetable": True,
             },
@@ -218,8 +225,8 @@ def requested_labels(config: Mapping[str, Any]) -> tuple[str, ...]:
     if not isinstance(raw, Sequence) or isinstance(raw, (str, bytes)):
         raise ValueError("config.prompts must be an array of strings")
     labels = tuple(str(item).strip() for item in raw if str(item).strip())
-    if len(labels) > 64:
-        raise ValueError("config.prompts is limited to 64 labels")
+    if len(labels) > 96:
+        raise ValueError("config.prompts is limited to 96 labels")
     return labels
 
 
@@ -242,6 +249,8 @@ def category_group(label: str) -> str:
     for group, labels in DEFAULT_CATEGORIES.items():
         if label in labels:
             return group
+    if label in DEFAULT_GENRES:
+        return "genre"
     return "custom"
 
 
@@ -276,7 +285,7 @@ def tag_annotations(
             ranked.append((label, group, facet_score, raw_score))
     return [
         {
-            "namespace": "visual.category",
+            "namespace": "visual.genre" if group == "genre" else "visual.category",
             "label": label,
             "confidence": float(confidence),
             "value": {
