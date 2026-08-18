@@ -152,9 +152,27 @@ class LoadedModel:
                 f"{len(self.labels)} entries. They must line up exactly, or every tag is wrong."
             )
 
-    def prepare(self, image: Image.Image, *, normalize: bool, bgr: bool, scale: bool) -> np.ndarray:
+    def prepare(
+        self,
+        image: Image.Image,
+        *,
+        normalize: bool,
+        bgr: bool,
+        scale: bool,
+        pad_square: bool = False,
+    ) -> np.ndarray:
         """Turn a PIL image into the batch tensor this model expects."""
-        frame = image.convert("RGB").resize(self.size, Image.Resampling.BILINEAR)
+        frame = image.convert("RGB")
+        if pad_square:
+            # Taggers are trained on letterboxed squares. Stretching a 16:9
+            # frame to a square instead distorts every aspect ratio the model
+            # learned, and it shows up as confidently wrong tags rather than as
+            # an error.
+            side = max(frame.width, frame.height)
+            canvas = Image.new("RGB", (side, side), (255, 255, 255))
+            canvas.paste(frame, ((side - frame.width) // 2, (side - frame.height) // 2))
+            frame = canvas
+        frame = frame.resize(self.size, Image.Resampling.BILINEAR)
         array = np.asarray(frame, dtype=np.float32)
         if scale:
             array /= 255.0
@@ -323,6 +341,7 @@ class LocalTaggerAnalyzer:
             normalize=bool(config.get("normalize", False)),
             bgr=bool(config.get("bgr", False)),
             scale=bool(config.get("scale", True)),
+            pad_square=bool(config.get("pad_square", False)),
         )
         scores = _activate(model.run(batch), str(config.get("activation", "auto")))
         if scores.size != len(model.labels):

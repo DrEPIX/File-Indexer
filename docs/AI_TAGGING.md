@@ -48,6 +48,13 @@ audio, OCR — with what each one would emit, whether it runs in-process, its
 licence, and a link to its repository. Nothing downloads automatically; a
 model is a large file from the internet and that decision stays with you.
 
+A recognised model brings its own preprocessing with it. The WD taggers, for
+instance, want a letterboxed square, BGR channel order, raw 0-255 pixels, and
+no second sigmoid — get any of those wrong and the model does not fail, it
+returns confident nonsense that no user could be expected to diagnose. Choosing
+a file whose name matches a known family applies those settings automatically;
+anything unrecognised keeps the analyzer's neutral defaults.
+
 Once you have a `.onnx` file, choose **Use a model file…** and pick it. If its
 label list is not beside it (`selected_tags.csv`, `labels.txt`, `classes.txt`
 or `labels.json`), you are asked for that too — a model's scores are

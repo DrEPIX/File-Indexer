@@ -253,12 +253,18 @@ class PluginManager:
         store that congratulates you on a choice that then does nothing until
         you find the analyzer and enable it separately.
         """
+        from ..models import preprocess_for
+
         settings = dict(self.config.plugin_config(LOCAL_TAGGER_ID))
         settings["model_path"] = str(model_path)
         if labels_path:
             settings["labels_path"] = str(labels_path)
         else:
             settings.pop("labels_path", None)
+        # A recognised model brings its own preprocessing. Feeding a tagger
+        # RGB when it wants BGR does not fail, it returns confident nonsense,
+        # and no user could be expected to know the difference.
+        settings.update(preprocess_for(str(model_path)))
         settings.setdefault("threshold", 0.35)
         settings.setdefault("max_frames", 12)
         self.configure(LOCAL_TAGGER_ID, settings)

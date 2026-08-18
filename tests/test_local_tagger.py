@@ -402,3 +402,34 @@ def test_the_store_can_tell_you_whether_tagging_lands_on_the_gpu() -> None:
     report = execution_providers()
     assert isinstance(report["available"], list) and report["available"]
     assert report["gpu"] is bool(report["accelerator"])
+
+
+def test_a_known_model_brings_its_own_preprocessing() -> None:
+    """Feeding a tagger the wrong colour order returns confident nonsense."""
+    from mediaengine.models import preprocess_for
+
+    wd = preprocess_for(r"D:\models\wd-swinv2-tagger-v3\model.onnx")
+    assert wd["bgr"] is True and wd["scale"] is False and wd["pad_square"] is True
+    # The network applies its own sigmoid; applying a second one halves every score.
+    assert wd["activation"] == "none"
+    assert preprocess_for("D:/models/something-nobody-has-heard-of.onnx") == {}
+
+
+def test_square_padding_does_not_distort_a_widescreen_frame(
+    tmp_path: Path, model_and_labels: tuple[Path, Path]
+) -> None:
+    """A 16:9 frame stretched to a square is not what the tagger was trained on."""
+    from PIL import Image
+
+    model, labels = model_and_labels
+    loaded_labels = load_labels(labels)
+    from mediaengine.plugins.builtin.local_tagger import LoadedModel
+
+    loaded = LoadedModel(model, loaded_labels)
+    wide = Image.new("RGB", (320, 180), (200, 40, 40))
+    padded = loaded.prepare(wide, normalize=False, bgr=False, scale=True, pad_square=True)
+    stretched = loaded.prepare(wide, normalize=False, bgr=False, scale=True, pad_square=False)
+    assert padded.shape == stretched.shape
+    assert not np.allclose(padded, stretched), "padding must actually change the input"
+    # The letterbox is white, so the padded tensor is brighter overall.
+    assert float(padded.mean()) > float(stretched.mean())
