@@ -51,10 +51,38 @@ See `docs/DEPLOYMENT.md`, `docs/AI_TAGGING.md`,
 local-model, face-reference, safety, and GPU profiles.
 
 `docs/FILTER_PACKS.md` covers filter packs — installable TOML taxonomies that
-add a search facet (sport, animation, origin platform, adult-content
-screening) without any code. `docs/ASSISTANT.md` covers Studio's in-app
-assistant, which can author those packs from a description and stages every
-change for approval.
+add a search facet (video genre, sport, animation, origin platform,
+adult-content screening) without any code. `docs/ASSISTANT.md` covers Studio's
+in-app assistant, which can author those packs from a description and stages
+every change for approval.
+
+## Moving or erasing an installation's own data
+
+Two commands operate on the engine's files rather than on the library's
+contents. Both close the database first, and neither ever touches an original.
+
+```powershell
+.\.venv\Scripts\python.exe -m mediaengine storage                      # where it lives, and how big
+.\.venv\Scripts\python.exe -m mediaengine storage --move-to D:\Library # take the index, cache and log there
+.\.venv\Scripts\python.exe -m mediaengine storage --use D:\Other       # switch to a library already there
+.\.venv\Scripts\python.exe -m mediaengine reset --yes                  # delete index, previews, logs, settings
+```
+
+`--dry-run` prints the file-by-file plan without moving anything. A move is
+refused before it starts if the destination sits inside a library root (the
+next scan would index our own previews), if a library is already stored there,
+or if the volume cannot hold it; a move that fails part-way puts back whatever
+it had already moved.
+
+`reset` restores a first-run configuration in place — library roots, analyzer
+choices and per-plugin settings are cleared, while the storage paths and the
+plugin/filter-pack directories a packaged build cannot rediscover are kept. Add
+`--delete-config` to remove `config.yaml` outright. Anything that sits inside,
+or contains, a library root is reported as kept rather than deleted.
+
+Studio exposes both under **Settings ▸ Library** and **Settings ▸ Reset**; the
+Python API is `mediaengine.maintenance` (`describe_storage`, `plan_relocation`,
+`relocate_storage`, `master_reset`).
 
 The local “Who is this?” clustering flow, manually linked profiles, and
 non-generative Wikipedia biographies are documented in

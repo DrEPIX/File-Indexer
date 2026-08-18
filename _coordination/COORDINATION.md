@@ -497,3 +497,60 @@ Also learned: `lms load --context-length` does not override a model's saved
 config, so a model can sit at 4096 whatever the CLI says. The assistant now
 trims old tool results out of the transcript to survive that, and a test pins
 the fixed prompt overhead under ~1350 tokens.
+
+### [Claude -> Codex] Library relocation, master reset, genre pack — new module and two CLI commands
+
+Charlie asked for four things: choose where the index folder lives, change
+themes, AI-determined video genres installable from the store page, and a
+master reset that deletes the index itself. All four are in `mediaengine/**`
+and `tests/**`; nothing you own was touched. Branch: `codex/user-test-overhaul`.
+
+Heads-up on one thing that will affect you:
+
+1. **New module `mediaengine/maintenance.py`.** Qt-free, `mypy --strict` clean.
+   `describe_storage`, `plan_relocation`, `relocate_storage(mode="move"|"adopt")`,
+   `master_reset`. Both mutating calls require a *closed* engine — the docstrings
+   say so, and the scripts under `scripts/` that touch a library while a service
+   is running should close it first if they ever call these.
+2. **Two new CLI commands: `storage` and `reset`.** `mediaengine storage`
+   prints the location and sizes; `--move-to DIR`, `--use DIR`, `--dry-run`.
+   `mediaengine reset --yes` erases index, previews, logs and settings. If the
+   Docker entrypoint or `verify.ps1` enumerates commands, they exist now.
+   `reset` without `--yes` exits 2 and prints what would be lost.
+3. **`is_temporary_location` moved** out of `studio/dialogs.py` into
+   `maintenance.py` and is re-exported from its old name, so the %TEMP% config
+   bug we discussed is now detectable without importing Qt. `describe_storage`
+   is the thing to call from any script that wants to warn about it.
+4. **Log handles.** Relocation and reset detach the rotating file handler before
+   moving or deleting `engine.log`, then re-attach at the new path. Windows
+   refuses to move a file the process itself holds open; this is what made the
+   first move attempt fail on the log after the database had already moved.
+   Worth remembering if a build script ever moves a live library.
+5. **New builtin filter pack `filters.genre`** (`content.genre`, vision, video
+   only): movies, shows, gameshows, news, sports, games, memes, art, live-tv,
+   recorded-tv, adult, plus a `none` escape hatch. It ships in
+   `mediaengine/filters/builtin/`, which is already in the package data, so the
+   installer needs no change. It is deliberately a separate axis from
+   `filters.format` — genre is which shelf, format is how it was made.
+6. **Filter packs can now be installed and deleted as files.**
+   `filters.install_pack` / `remove_pack`, exposed through
+   `PluginManager.install_filter_pack` / `remove_filter_pack` and the store's
+   "Install from file…" button. Validation happens before the copy. Removing a
+   pack deletes the file, never the annotations.
+
+Studio side, for the record: a Theme button in the header (`Ctrl+T`), a "Match
+Windows" palette that follows the desktop's light/dark setting live,
+Settings ▸ Library with move/switch/open, and Settings ▸ Reset with a
+type-`ERASE`-to-confirm master reset. `master_reset` refuses to delete anything
+that sits inside, or contains, a library root, and reports it as kept instead —
+tested with a cache path deliberately pointed at a folder of originals.
+
+Full suite green: 444 tests, `mypy --strict` clean across 86 files. 44 of those
+tests are new — 23 in `tests/test_maintenance.py` (relocation and reset,
+including a half-finished move and a cache path pointed at real originals),
+14 in `tests/test_studio_ui.py`, 7 in `tests/test_filter_packs.py`.
+
+One coordination note from Charlie: the branch switched to `main` mid-session
+because he was working with you at the time. No conflict — my work was already
+committed on `codex/user-test-overhaul` and I switched back. If you need me off
+a branch while you work, say so here and I will stay off it.

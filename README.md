@@ -13,9 +13,33 @@ Studio.bat`**. Studio uses PySide6/Qt for rounded native rendering, animated
 controls, responsive media tiles, automatic folder watching, and silent video
 hover previews. It opens the same local library as V1 and never requires a CLI.
 Studio now includes a visual folder manager, a searchable AI Analyzer Store,
-five accessible color palettes, adjustable tile density, motion/video-preview
+nine accessible color palettes plus a "Match Windows" option that follows the
+desktop's light/dark setting, adjustable tile density, motion/video-preview
 preferences, and a safe preference reset. Removing a library folder forgets
 only its index entries and generated previews; original media is never deleted.
+
+Studio also lets you decide where the library itself lives, and how to get rid
+of it:
+
+- **Theme** in the header (or `Ctrl+T`) switches palette instantly; the same
+  choices, plus accent colour and gradient intensity, live in
+  **Settings ▸ Appearance**.
+- **Settings ▸ Library** shows the folder holding your index and previews, how
+  much space each takes, and offers **Move library…** (carries the index,
+  preview cache and log to a folder you choose, without re-scanning) and **Use
+  another library…** (switch to a library that already exists elsewhere,
+  moving nothing — two libraries on one machine).
+- **Settings ▸ Reset** separates *Reset preferences* from **Erase library and
+  settings**, which deletes the index itself: every tag, label, person,
+  favourite, preview, folder list and setting. It asks you to type `ERASE`
+  first, and it refuses to delete anything that sits inside — or contains —
+  one of your media folders. Your originals are never touched.
+- **AI Analyzer Store ▸ Filters** installs AI-determined taxonomies one at a
+  time. `filters.genre` sorts videos into movies, shows, gameshows, news,
+  sport, games, memes, art, live TV, recorded TV and adult; the sport, format,
+  animation, origin and NSFW packs sort along their own axes. Each value
+  becomes a search filter and a facet. Vision packs need a local model from the
+  Model Store tab. See [filter packs](docs/FILTER_PACKS.md).
 
 The stable classic interface remains available through **`Start File Indexer
 V1.bat`**; Studio is an additional frontend and does not overwrite it.

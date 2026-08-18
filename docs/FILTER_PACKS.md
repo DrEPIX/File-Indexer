@@ -15,6 +15,7 @@ user-facing way to put something in a namespace.
 | Pack | Facet | Sorts into | Method |
 |---|---|---|---|
 | `filters.origin` | Came from | Twitch, YouTube, TikTok, screen recording, phone camera, dedicated camera, chat app | rules |
+| `filters.genre` | Genre | movies, shows, gameshows, news, sport, games, memes, art, live TV, recorded TV, adult | vision |
 | `filters.format` | Kind | movie, TV episode, documentary, stream VOD, clip, trailer, music video, tutorial, home video, gameplay, screen capture, sports broadcast | vision |
 | `filters.sport` | Sport | football, American football, basketball, baseball, ice hockey, tennis, combat sports, motorsport, cycling, athletics, swimming, golf, cricket, rugby, esports, extreme sports | vision |
 | `filters.animation` | Animation | live action, anime, western cartoon, 3D/CGI, stop motion, motion graphics, pixel art, mixed media | vision |
@@ -22,6 +23,27 @@ user-facing way to put something in a namespace.
 
 Add them from Studio's **AI Analyzer Store ▸ Filters** (`Ctrl+M`). Adding a
 filter enables its analyzer; **Sort now** runs it over the scope you pick.
+**Install from file…** in the same tab adds a `.toml` pack someone else wrote,
+and packs you installed carry a **Delete** button — shipped ones do not, because
+switching a shipped pack off is what removing it means.
+
+### Genre, format and sport are three questions, not one
+
+`filters.genre` answers "what shelf does this go on". `filters.format` answers
+"how was it made". They overlap in wording and not in use: a meme compilation of
+gameshow clips is `content.genre:memes` and `content.format:clip`, while the
+broadcast it was cut from is `content.genre:gameshows` and
+`content.format:tv-episode`. Install whichever axes you actually sort by —
+combining them in one query is the point:
+
+```text
+content.genre:movies content.animation:anime      # anime films
+content.genre:sports -content.format:clip         # full matches, not highlights
+```
+
+`content.genre:adult` is a shelf, not a screening tool. For actually keeping
+adult content out of everyday browsing, install `filters.safety-nsfw`, which
+rates every asset and is tuned to send uncertain cases to review.
 
 ## The three methods
 
@@ -67,6 +89,18 @@ not:safety.nsfw:flagged        # exclude flagged, keep unrated
 Aliases also widen plain text search: typing `footy` searches for `football`
 and `soccer` as well. Expansion is additive, so an alias can never shrink a
 result set on a library where that pack has not run yet.
+
+## Installing one someone else wrote
+
+Packs are plain files, so sharing one means sharing a `.toml`. **Install from
+file…** validates it before copying it into your pack folder — a pack that
+lands in the folder and only then turns out to be malformed looks exactly like
+one that installed and did nothing, so the refusal happens at import and names
+the line that is wrong.
+
+Deleting a pack removes the file, not the tags. The annotations it produced stay
+in the database with their provenance, so reinstalling the same pack picks them
+straight back up rather than re-analysing the library.
 
 ## Writing your own
 

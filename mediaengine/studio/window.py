@@ -1037,6 +1037,24 @@ class StudioWindow(QMainWindow):
         if self.auto_button.isChecked():
             self.periodic_scan.start()
 
+    def _pause_automation(self) -> None:
+        """Silence every timer that could reopen the library behind our back.
+
+        ``engine.search()`` starts a closed engine on demand, so a folder
+        watchdog or the ten-minute rescan firing mid-relocation would recreate
+        the database file that is halfway through moving — or the one a reset
+        has just deleted.
+        """
+        self.periodic_scan.stop()
+        self.watch_debounce.stop()
+        self.search_timer.stop()
+
+    def _resume_automation(self) -> None:
+        """Start watching again, against whatever folders the config now lists."""
+        self._refresh_watched_paths()
+        if self.auto_button.isChecked():
+            self.periodic_scan.start()
+
     def _refresh_watched_paths(self) -> None:
         if not hasattr(self, "watcher"):
             return
@@ -1196,6 +1214,7 @@ class StudioWindow(QMainWindow):
             return
 
         self.status.set_busy("Moving your library…" if mode == "move" else "Switching library…")
+        self._pause_automation()
         destination = plan.destination
 
         def work() -> dict[str, Any]:
@@ -1218,12 +1237,14 @@ class StudioWindow(QMainWindow):
         self.show_toast(f"Library now stored in {result.get('destination', 'its new home')}.")
         if self.settings_dialog is not None and self.settings_dialog.isVisible():
             self.settings_dialog.close()
+        self._resume_automation()
         self._start_engine()
 
     def _relocation_failed(self, detail: str) -> None:
         """Reopen the library that never moved, then explain what happened."""
         self.engine = MediaEngine(self.config)
         self.status.set_ready("Library unchanged")
+        self._resume_automation()
         self._start_engine()
         self._show_worker_error(detail)
 
@@ -1242,6 +1263,7 @@ class StudioWindow(QMainWindow):
         if confirm.exec() != QDialogAccepted:
             return
         self.status.set_busy("Erasing everything…")
+        self._pause_automation()
 
         def work() -> dict[str, Any]:
             self.engine.close()
@@ -1256,8 +1278,11 @@ class StudioWindow(QMainWindow):
 
     def _erase_finished(self, payload: object) -> None:
         result = payload if isinstance(payload, dict) else {}
-        self.reset_preferences(notify=False)
+        # The new engine first: resetting preferences repaints, and a repaint
+        # searches — against whichever engine is on `self` at that moment. The
+        # old one would obligingly recreate the database we just deleted.
         self.engine = MediaEngine(self.config)
+        self.reset_preferences(notify=False)
         self.current_query = ""
         self.current_filter = ""
         self.active_facets = []
@@ -1275,6 +1300,7 @@ class StudioWindow(QMainWindow):
                 "Studio refused to delete these because they hold, or sit inside, your media "
                 "folders:\n\n" + "\n".join(f"{item[0]} — {item[1]}" for item in kept[:6]),
             )
+        self._resume_automation()
         self._start_engine()
 
     # ── analyzer store ────────────────────────────────────────────────────
