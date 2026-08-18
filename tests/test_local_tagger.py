@@ -20,6 +20,7 @@ from mediaengine.plugins.builtin.local_tagger import (
     DEFAULT_NAMESPACE,
     LocalTaggerAnalyzer,
     _activate,
+    _rank_providers,
     load_labels,
 )
 
@@ -357,3 +358,47 @@ def test_models_that_run_in_process_say_what_they_need() -> None:
     for item in catalog_for(local_only=True):
         if item.runtime == "onnx":
             assert item.requires == "onnxruntime", item.id
+
+
+# ── execution providers ──────────────────────────────────────────────────────
+
+
+def test_the_gpu_is_preferred_and_the_azure_shim_is_never_used() -> None:
+    """A stock Windows wheel lists a remote-inference provider first.
+
+    Handing that list straight back is how a machine with a 4080 in it fails
+    to use the 4080 — and worse, tries to send frames somewhere else.
+    """
+    available = ["AzureExecutionProvider", "CUDAExecutionProvider", "CPUExecutionProvider"]
+    assert _rank_providers([], available) == ["CUDAExecutionProvider", "CPUExecutionProvider"]
+
+    directml = ["AzureExecutionProvider", "DmlExecutionProvider", "CPUExecutionProvider"]
+    assert _rank_providers([], directml) == ["DmlExecutionProvider", "CPUExecutionProvider"]
+
+
+def test_cpu_remains_as_the_fallback_behind_every_accelerator() -> None:
+    """A GPU provider that fails to initialise must degrade, not break."""
+    ranked = _rank_providers([], ["CUDAExecutionProvider", "CPUExecutionProvider"])
+    assert ranked[-1] == "CPUExecutionProvider"
+    assert _rank_providers([], ["CPUExecutionProvider"]) == ["CPUExecutionProvider"]
+
+
+def test_tensorrt_is_not_chosen_by_default() -> None:
+    """It compiles an engine per model on first use, which reads as a hang."""
+    ranked = _rank_providers(
+        [], ["TensorrtExecutionProvider", "CUDAExecutionProvider", "CPUExecutionProvider"]
+    )
+    assert ranked[0] == "CUDAExecutionProvider"
+    assert "TensorrtExecutionProvider" not in ranked
+    # ...but an operator who asks for it explicitly gets it.
+    assert _rank_providers(
+        ["TensorrtExecutionProvider"], ["TensorrtExecutionProvider", "CPUExecutionProvider"]
+    ) == ["TensorrtExecutionProvider"]
+
+
+def test_the_store_can_tell_you_whether_tagging_lands_on_the_gpu() -> None:
+    from mediaengine.models import execution_providers
+
+    report = execution_providers()
+    assert isinstance(report["available"], list) and report["available"]
+    assert report["gpu"] is bool(report["accelerator"])

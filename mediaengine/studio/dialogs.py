@@ -1272,22 +1272,29 @@ class AnalyzerStoreDialog(QDialog):
             return
 
         runtimes = state.get("runtimes") or {}
+        execution = state.get("execution") or {}
         active = str(state.get("model_path") or "")
+        # Naming the device is the difference between a library tagged
+        # overnight and one tagged over a fortnight, and nothing else in the
+        # interface would reveal a silent fall back to CPU.
+        device = "your GPU" if execution.get("gpu") else "the CPU"
         if not runtimes.get("onnxruntime"):
             self.vision_banner.setText(
-                "⚠  onnxruntime is not installed, so no local tagging model can run yet. "
-                "Install it with:   pip install onnxruntime-gpu   (or onnxruntime on CPU)"
+                "⚠  No ONNX runtime is installed, so no local tagging model can run yet. "
+                "Install it with:   pip install onnxruntime-directml   (Windows GPU) "
+                "or   pip install onnxruntime   (CPU)"
             )
         elif active:
             self.vision_banner.setText(
-                f"Tagging with {Path(active).name} — every video tag is recorded with the "
-                "second it was seen. No language model involved."
+                f"Tagging with {Path(active).name} on {device} — every video tag is recorded "
+                "with the second it was seen. No language model involved."
             )
         else:
             self.vision_banner.setText(
-                "Local models tag without a language model: faster, offline, and they cannot "
-                "invent a label. Download one below, then choose “Use a model file…”. "
-                "Videos are tagged frame by frame, so every tag carries a timestamp."
+                f"Local models tag without a language model: faster, offline, and they cannot "
+                f"invent a label. Ready to run on {device}. Download one below, then choose "
+                "“Use a model file…”. Videos are tagged frame by frame, so every tag carries "
+                "a timestamp."
             )
 
         query = self.vision_search.text().strip().lower()

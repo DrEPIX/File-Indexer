@@ -108,8 +108,18 @@ class LoadedModel:
                 "`pip install onnxruntime-gpu` (NVIDIA) or `pip install onnxruntime` (CPU)."
             ) from exc
 
+        # CUDA and cuDNN are commonly installed as pip wheels rather than a
+        # system toolkit, and their DLLs are then not on PATH. onnxruntime can
+        # find them, but only if asked before the first session is built.
+        preload = getattr(onnxruntime, "preload_dlls", None)
+        if callable(preload):
+            try:
+                preload()
+            except Exception as exc:  # noqa: BLE001 - a GPU that will not load is not fatal
+                _LOG.debug("could not preload GPU libraries: %s", exc)
+
         available = list(onnxruntime.get_available_providers())
-        chosen = [name for name in (providers or available) if name in available] or available
+        chosen = _rank_providers(providers or available, available)
         options = onnxruntime.SessionOptions()
         options.log_severity_level = 3
         self.session = onnxruntime.InferenceSession(
@@ -161,6 +171,39 @@ class LoadedModel:
     def run(self, batch: np.ndarray) -> np.ndarray:
         raw = self.session.run([self.output_name], {self.input_name: batch})[0]
         return np.asarray(raw, dtype=np.float32).reshape(-1)
+
+
+#: Execution providers in the order we want them, fastest first. Ordering is
+#: not cosmetic: ``get_available_providers()`` lists whatever the build has,
+#: and on a stock Windows wheel that puts ``AzureExecutionProvider`` — a
+#: remote-inference shim — ahead of the local CPU one. Handing that list back
+#: unsorted is how a machine with a 4080 in it ends up not using the 4080.
+#: CUDA before TensorRT deliberately. TensorRT is faster once warm, but it
+#: compiles an engine for each new model and shape on first use, which turns
+#: "tag this video" into a multi-minute stall the first time and looks like a
+#: hang. CPU is last and always present, so a GPU provider that fails to
+#: initialise degrades to slow rather than to broken.
+PROVIDER_PREFERENCE: tuple[str, ...] = (
+    "CUDAExecutionProvider",
+    "DmlExecutionProvider",
+    "ROCMExecutionProvider",
+    "CoreMLExecutionProvider",
+    "CPUExecutionProvider",
+)
+
+
+def _rank_providers(requested: Sequence[str], available: Sequence[str]) -> list[str]:
+    """Order the usable providers by preference, GPU first, CPU last.
+
+    Ordering is not cosmetic. ``get_available_providers()`` returns whatever
+    the build offers, and a stock Windows wheel lists
+    ``AzureExecutionProvider`` — a remote-inference shim — first. Handing that
+    list straight back is how a machine with a 4080 in it fails to use the
+    4080, so anything not named here is dropped rather than ranked.
+    """
+    usable = [name for name in requested if name in available] or list(available)
+    ranked = [name for name in PROVIDER_PREFERENCE if name in usable]
+    return ranked or list(usable)
 
 
 def _as_int(value: Any) -> int | None:

@@ -54,12 +54,23 @@ or `labels.json`), you are asked for that too — a model's scores are
 meaningless without the list of what they are scores for, and a list that is
 off by one row mislabels an entire library without looking broken.
 
-Install the runtime once:
+Install the runtime once. On Windows the DirectML build is the default and
+the fast path: it drives any DirectX 12 GPU — including an NVIDIA card —
+without a CUDA toolkit, cuDNN, or a gigabyte of runtime wheels.
 
 ```powershell
-.\.venv\Scripts\python.exe -m pip install onnxruntime-gpu   # NVIDIA
-.\.venv\Scripts\python.exe -m pip install onnxruntime       # CPU
+.\.venv\Scripts\python.exe -m pip install onnxruntime-directml   # Windows, GPU
+.\.venv\Scripts\python.exe -m pip install onnxruntime            # CPU anywhere
+.\.venv\Scripts\python.exe -m pip install onnxruntime-gpu        # CUDA-native machines
 ```
+
+The analyzer ranks execution providers itself rather than trusting the order
+the runtime reports, which on a stock Windows wheel begins with a
+remote-inference shim. GPU first, CPU last as a fallback, and TensorRT only if
+you ask for it by name — it compiles an engine per model on first use, which
+looks exactly like a hang. The store's banner names the device actually in use,
+because a silent fall back to CPU is the difference between tagging a library
+overnight and tagging it over a fortnight.
 
 ### Video tags carry timestamps
 

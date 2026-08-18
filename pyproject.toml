@@ -43,9 +43,14 @@ vec = ["sqlite-vec>=0.1.1"]
 # Modern Qt desktop frontend. The classic Tk V1 remains dependency-free.
 studio = ["PySide6>=6.7,<7"]
 # Local ONNX vision models for tagging, so tagging needs no language model and
-# no server. Swap in `onnxruntime-gpu` on an NVIDIA machine; the analyzer picks
-# whichever execution providers are present.
-vision = ["onnxruntime>=1.17"]
+# no server. Windows gets the DirectML build, which uses the GPU through
+# DirectX 12 and needs no CUDA toolkit or cuDNN install — on an NVIDIA card
+# that is a one-command GPU setup rather than a gigabyte of runtime wheels.
+# `onnxruntime-gpu` remains a valid swap for a CUDA-native machine.
+vision = [
+  "onnxruntime-directml>=1.17; sys_platform == 'win32'",
+  "onnxruntime>=1.17; sys_platform != 'win32'",
+]
 dev = [
   "pytest>=8.0",
   "pytest-asyncio>=0.23",

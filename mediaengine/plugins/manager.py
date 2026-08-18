@@ -230,13 +230,14 @@ class PluginManager:
         nobody can answer from a model card — whether the runtime that executes
         it is actually installed here.
         """
-        from ..models import CATALOG, installed_runtimes, tasks
+        from ..models import CATALOG, execution_providers, installed_runtimes, tasks
 
         settings = self.config.plugin_config(LOCAL_TAGGER_ID)
         return {
             "models": [item.as_dict() for item in CATALOG],
             "tasks": tasks(),
             "runtimes": installed_runtimes(),
+            "execution": execution_providers(),
             "model_path": str(settings.get("model_path") or ""),
             "labels_path": str(settings.get("labels_path") or ""),
             "enabled": self.config.plugins.is_enabled(LOCAL_TAGGER_ID),
