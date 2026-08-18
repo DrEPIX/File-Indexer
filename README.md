@@ -39,6 +39,11 @@ of it:
   sport, games, memes, art, live TV, recorded TV and adult; the sport, format,
   animation, origin and NSFW packs sort along their own axes. Each value
   becomes a search filter and a facet. See [filter packs](docs/FILTER_PACKS.md).
+- **Double-clicking a video opens Studio's own player**, whose scrub bar marks
+  every moment an analyzer labelled. Click a mark, or a row in the list beside
+  the picture, to jump straight to it; the label under the playhead is shown as
+  it plays. Anything Windows cannot decode is one button away from your usual
+  player, with the tagged moments still listed.
 - **AI Analyzer Store ▸ Tagging models** catalogues open-source vision models
   by job — tagging, NSFW, detection, faces, scenes, speech, audio, OCR — with a
   link to each project, what it would emit, and whether it runs in-process.

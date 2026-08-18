@@ -31,7 +31,12 @@ from mediaengine.studio.tokens import (
     palette_names,
     system_is_dark,
 )
-from mediaengine.studio.window import StudioWindow, _as_float, _decorate, _thumbnail_for
+from mediaengine.studio.window import (
+    StudioWindow,
+    _as_float,
+    _decorate,
+    _thumbnail_for,
+)
 
 
 @pytest.fixture(scope="module")
@@ -467,3 +472,67 @@ def test_the_shipped_genre_filter_reaches_the_store(qt_app: QApplication) -> Non
     store.pack_search.setText("nothing matches this")
     assert store.pack_rows.count() == 1
     store.close()
+
+
+# ── which analyzer output reaches a tile ─────────────────────────────────────
+
+
+def _labels(*rows: tuple[str, str, float]) -> dict[int, list[dict[str, Any]]]:
+    return {1: [{"namespace": ns, "label": label, "confidence": c} for ns, label, c in rows]}
+
+
+def test_tags_from_any_namespace_reach_the_tile() -> None:
+    """An allowlist hid `content.tag` entirely — the local tagger's whole output.
+
+    The core is built so anyone can ship an analyzer emitting a namespace the
+    UI has never heard of. A tile that renders three known namespaces defeats
+    that, silently.
+    """
+    items: list[dict[str, Any]] = [{"id": 1}]
+    _decorate(
+        items,
+        _labels(
+            ("content.tag", "beach", 0.9),
+            ("content.genre", "movies", 0.7),
+            ("plugin.nobody.has.seen", "novel", 0.8),
+            ("user.label", "favorite", 1.0),
+        ),
+    )
+    assert set(items[0]["tags"]) == {"beach", "movies", "novel", "favorite"}
+
+
+def test_technical_signals_stay_off_the_tile() -> None:
+    """Exposure and embeddings are not what anyone means by "tags"."""
+    items: list[dict[str, Any]] = [{"id": 1}]
+    _decorate(
+        items,
+        _labels(
+            ("visual.exposure", "bright", 0.9),
+            ("embedding.clip", "vector", 0.9),
+            ("content.tag", "dog", 0.5),
+        ),
+    )
+    assert items[0]["tags"] == ["dog"]
+
+
+def test_the_most_confident_labels_are_the_ones_shown() -> None:
+    """A tile fits six; they should be the six the model was surest about."""
+    items: list[dict[str, Any]] = [{"id": 1}]
+    _decorate(
+        items,
+        _labels(*[("content.tag", f"tag{index}", index / 10) for index in range(1, 10)]),
+    )
+    assert items[0]["tags"] == ["tag9", "tag8", "tag7", "tag6", "tag5", "tag4"]
+    # The inspector can still show everything the tile had no room for.
+    assert len(items[0]["all_tags"]) == 9
+
+
+def test_a_summary_is_still_pulled_out_separately() -> None:
+    items: list[dict[str, Any]] = [{"id": 1}]
+    labels = _labels(("content.tag", "dog", 0.9))
+    labels[1].append(
+        {"namespace": "llm.summary", "label": "summary", "value": {"text": "A dog on a beach."}}
+    )
+    _decorate(items, labels)
+    assert items[0]["ai_summary"] == "A dog on a beach."
+    assert items[0]["tags"] == ["dog"]

@@ -91,6 +91,12 @@ video". Each run produces two kinds of annotation:
 * **per asset** — the same labels once more without a timestamp, so a search
   finds the video without having to know which second to ask about.
 
+Double-clicking a video in Studio opens the built-in player, which reads those
+per-frame claims back: a mark on the scrub bar at every labelled moment, taller
+where the model was more certain, a list beside the picture, and the current
+labels under the playhead as it plays. Clicking near a mark snaps to it rather
+than to the pixel, because the marks are the reason to click there.
+
 `min_frames` keeps a glimpse out of the facets: a label seen in one frame of
 forty is not what the video is about. `max_frames` bounds the cost on a
 feature-length file.

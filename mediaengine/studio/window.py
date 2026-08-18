@@ -87,6 +87,7 @@ from .components import (
     human_size,
     open_item,
 )
+from .player import VideoPlayerDialog, group_moments
 from .dialogs import (
     AnalyzerStoreDialog,
     EraseConfirmDialog,
@@ -111,8 +112,13 @@ LM_STUDIO_ID = "local.lm-studio"
 #: a legible frame matters more than how many fit on screen.
 CARD_WIDTHS = {"Compact": 216, "Comfortable": 245, "Spacious": 286, "Cinema": 340}
 
-#: Namespaces whose labels are worth showing on a tile without being asked.
-TILE_NAMESPACES = ("llm.category", "llm.tag", "user.label")
+#: Namespaces whose labels are *not* worth showing on a tile. An allowlist
+#: was the wrong shape here: the core is built so anyone can ship an analyzer
+#: emitting a namespace nobody has heard of, and a tile that only renders three
+#: known namespaces silently hides every one of them — which is exactly what
+#: happened to the local tagger's `content.tag`. So: show what analyzers found,
+#: and name the few kinds of output a person does not want on a thumbnail.
+HIDDEN_TILE_NAMESPACES = ("visual.", "embedding.", "llm.summary", "exif.", "file.")
 
 
 def _as_float(value: object, default: float) -> float:
@@ -156,11 +162,16 @@ def _thumbnail_for(config: Config, derivatives: list[dict[str, Any]]) -> str | N
 
 
 def _decorate(items: list[dict[str, Any]], labels: dict[int, list[dict[str, Any]]]) -> None:
-    """Attach analyzer output to search hits for the tile and inspector."""
+    """Attach analyzer output to search hits for the tile and inspector.
+
+    Highest confidence first, because a tile has room for six labels and the
+    six the model was surest about are the six worth showing.
+    """
     for item in items:
         rows = labels.get(int(item["id"]), [])
         tags: list[str] = []
         summary = ""
+        scored: list[tuple[float, str]] = []
         for row in rows:
             namespace = str(row.get("namespace") or "")
             if namespace == "llm.summary":
@@ -168,10 +179,21 @@ def _decorate(items: list[dict[str, Any]], labels: dict[int, list[dict[str, Any]
                 if isinstance(value, dict) and value.get("text"):
                     summary = str(value["text"])
                 continue
+            if namespace.startswith(HIDDEN_TILE_NAMESPACES):
+                continue
             label = str(row.get("label") or "")
-            if label and label not in tags:
+            if not label:
+                continue
+            try:
+                confidence = float(row.get("confidence") or 0.0)
+            except (TypeError, ValueError):
+                confidence = 0.0
+            scored.append((confidence, label))
+        for _confidence, label in sorted(scored, key=lambda pair: -pair[0]):
+            if label not in tags:
                 tags.append(label)
         item["tags"] = tags[:6]
+        item["all_tags"] = tags
         item["ai_summary"] = summary
 
 
@@ -224,6 +246,9 @@ class StudioWindow(QMainWindow):
         self.settings_dialog: SettingsDialog | None = None
         self.assistant_dialog: AssistantDialog | None = None
         self.assistant: Assistant | None = None
+        #: Open players. Held because a QDialog with no Python reference is
+        #: collected mid-playback, which closes the window under the user.
+        self.player_dialogs: list[VideoPlayerDialog] = []
 
         self.setWindowTitle("File Indexer Studio")
         resource_root = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parents[2]))
@@ -700,9 +725,10 @@ class StudioWindow(QMainWindow):
                 derivatives = self.engine.repos.derivatives.for_asset(int(item["id"]), kind="thumb")
                 item["thumbnail_path"] = _thumbnail_for(self.config, derivatives)
             if want_tags and hits:
+                # No namespace filter: whatever an analyzer produced is a tag
+                # worth seeing, and _decorate drops the handful that are not.
                 labels = self.engine.repos.annotations.live_labels(
-                    [int(item["id"]) for item in hits],
-                    namespaces=[*TILE_NAMESPACES, "llm.summary"],
+                    [int(item["id"]) for item in hits], per_asset=24
                 )
                 _decorate(hits, labels)
             payload = dict(result)
@@ -802,8 +828,42 @@ class StudioWindow(QMainWindow):
         self.inspector.show_item(item)
 
     def open_asset(self, item: dict[str, Any]) -> None:
+        """Open a video in Studio's own player; hand anything else to the OS.
+
+        The player is worth preferring for video specifically because it is the
+        only place the timestamps mean anything: an external player knows the
+        file, not what the analyzers found at 4:12.
+        """
+        if str(item.get("media_type") or "") == "video":
+            self.play_video(item)
+            return
         if not open_item(item):
             self.show_toast("That file is no longer available.")
+
+    def play_video(self, item: dict[str, Any]) -> None:
+        """Open the in-app player with this video's tagged moments loaded."""
+        path = Path(str(item.get("path") or ""))
+        if not path.exists():
+            self.show_toast("That file is no longer available.")
+            return
+        asset_id = int(item.get("id") or 0)
+        rows = (
+            self.engine.repos.annotations.for_asset(asset_id) if asset_id else []
+        )
+        dialog = VideoPlayerDialog(item, group_moments(rows), self.tokens, self)
+        dialog.open_externally_requested.connect(self._open_outside)
+        dialog.finished.connect(lambda _result: self._player_closed(dialog))
+        self.player_dialogs.append(dialog)
+        dialog.show()
+
+    def _open_outside(self, item: dict[str, Any]) -> None:
+        if not open_item(item):
+            self.show_toast("That file is no longer available.")
+
+    def _player_closed(self, dialog: VideoPlayerDialog) -> None:
+        if dialog in self.player_dialogs:
+            self.player_dialogs.remove(dialog)
+        dialog.deleteLater()
 
     def reveal_asset(self, item: dict[str, Any]) -> None:
         path = Path(str(item.get("path") or ""))
