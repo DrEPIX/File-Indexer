@@ -32,8 +32,23 @@ class EngineWorker(QRunnable):
         try:
             result = self.function(*self.args, **self.kwargs)
         except Exception:
-            self.signals.error.emit(traceback.format_exc())
+            self._emit(self.signals.error, traceback.format_exc())
         else:
-            self.signals.result.emit(result)
+            self._emit(self.signals.result, result)
         finally:
-            self.signals.finished.emit()
+            self._emit(self.signals.finished)
+
+    @staticmethod
+    def _emit(signal: Any, *payload: Any) -> None:
+        """Deliver a result unless the window that wanted it is already gone.
+
+        Closing Studio while a scan or a store refresh is in flight destroys
+        the receiving widgets first; Qt then raises "Signal source has been
+        deleted" from the worker thread, where nothing can catch it and the
+        user sees a traceback on the way out of an application they just
+        closed successfully.
+        """
+        try:
+            signal.emit(*payload)
+        except RuntimeError:
+            pass

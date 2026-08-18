@@ -407,7 +407,19 @@ class DerivativeBuilder:
         if not moments:
             moments = [0.0]
 
-        if scan.video_scene_detection and duration_s and duration_s > 0:
+        # Scene detection decodes every frame, so its cost scales with runtime
+        # while its value does not: a feature-length video already gets even
+        # coverage from interval sampling, and waiting an hour to also learn
+        # where its cuts are stalls the whole scan behind one file.
+        detect_scenes = (
+            scan.video_scene_detection
+            and bool(duration_s)
+            and (
+                scan.video_scene_max_duration_s <= 0
+                or float(duration_s or 0.0) <= scan.video_scene_max_duration_s
+            )
+        )
+        if detect_scenes and duration_s and duration_s > 0:
             for moment in self._scene_times(source, scan.video_scene_threshold):
                 if len(moments) >= scan.video_keyframe_max:
                     break

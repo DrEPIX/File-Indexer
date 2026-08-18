@@ -10,6 +10,7 @@ from __future__ import annotations
 from .exif_entities import ExifEntitiesAnalyzer
 from .exif_gps import ExifGpsAnalyzer
 from .lm_studio import LmStudioAnalyzer
+from .local_tagger import LocalTaggerAnalyzer
 from .stub_classifier import StubClassifier
 from .visual_signals import VisualSignalsAnalyzer
 
@@ -17,6 +18,7 @@ __all__ = [
     "ExifEntitiesAnalyzer",
     "ExifGpsAnalyzer",
     "LmStudioAnalyzer",
+    "LocalTaggerAnalyzer",
     "StubClassifier",
     "VisualSignalsAnalyzer",
 ]

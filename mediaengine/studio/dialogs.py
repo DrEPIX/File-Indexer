@@ -31,6 +31,7 @@ from .tokens import AUTO_PALETTE, PALETTES, TOKENS, StudioTokens, palette, palet
 
 __all__ = [
     "AnalyzerStoreDialog",
+    "VisionModelCard",
     "EraseConfirmDialog",
     "FolderManagerDialog",
     "SettingsDialog",
@@ -958,6 +959,85 @@ class FilterPackCard(Panel):
         self.run_requested.emit(payload)
 
 
+class VisionModelCard(Panel):
+    """One open-source model: what it tags, what it costs, where to get it."""
+
+    open_requested = Signal(str)
+    use_requested = Signal()
+
+    def __init__(
+        self, model: dict[str, Any], tokens: StudioTokens, parent: QWidget | None = None
+    ) -> None:
+        super().__init__(tokens, parent)
+        self.model = model
+        self.body.setContentsMargins(16, 14, 14, 14)
+        self.body.setSpacing(9)
+        local = bool(model.get("local"))
+
+        top = QHBoxLayout()
+        top.setSpacing(12)
+        glyph = {
+            "tagging": "◈", "nsfw": "◐", "detection": "▣", "faces": "☺",
+            "scenes": "▤", "speech": "▶", "audio": "♪", "text": "≡", "embedding": "✦",
+        }.get(str(model.get("task")), "◈")
+        icon = QLabel(glyph, self)
+        icon.setFixedSize(44, 44)
+        icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        icon.setStyleSheet(
+            f"background:{tokens.brand_soft}; color:{tokens.brand};"
+            "border-radius:13px; font-size:18px;"
+        )
+        top.addWidget(icon)
+
+        detail = QVBoxLayout()
+        detail.setSpacing(3)
+        title = QLabel(str(model.get("name") or model.get("id")), self)
+        title.setStyleSheet("font-size:13px; font-weight:700;")
+        detail.addWidget(title)
+        summary = QLabel(str(model.get("summary") or ""), self)
+        summary.setWordWrap(True)
+        summary.setStyleSheet(f"color:{tokens.ink_soft}; font-size:11px;")
+        detail.addWidget(summary)
+
+        size = int(model.get("size_mb") or 0)
+        badges = [
+            str(model.get("task", "")).upper(),
+            "RUNS HERE" if local else f"NEEDS {str(model.get('runtime', '')).upper()}",
+            f"TAGS → {str(model.get('namespace', '')).upper()}",
+        ]
+        if model.get("timestamps"):
+            badges.append("PER-FRAME TIMESTAMPS")
+        if size:
+            badges.append(f"~{size} MB")
+        badges.append(str(model.get("license", "")))
+        meta = QLabel("  ·  ".join(badge for badge in badges if badge), self)
+        meta.setWordWrap(True)
+        meta.setStyleSheet(
+            f"color:{tokens.mint if local else tokens.ink_faint}; font-size:9px; font-weight:700;"
+        )
+        detail.addWidget(meta)
+        top.addLayout(detail, 1)
+
+        page = AnimatedButton(
+            "Open on GitHub", variant="secondary", icon_text="↗", tokens=tokens, parent=self
+        )
+        page.clicked.connect(lambda: self.open_requested.emit(str(self.model.get("url") or "")))
+        top.addWidget(page)
+        if local and str(model.get("runtime")) == "onnx":
+            use = AnimatedButton("Use file…", variant="primary", tokens=tokens, parent=self)
+            use.setToolTip("Point the tagger at this model once you have downloaded it")
+            use.clicked.connect(self.use_requested)
+            top.addWidget(use)
+        self.body.addLayout(top)
+
+        note = str(model.get("notes") or "")
+        if note:
+            hint = QLabel(note, self)
+            hint.setWordWrap(True)
+            hint.setStyleSheet(f"color:{tokens.ink_faint}; font-size:10px;")
+            self.body.addWidget(hint)
+
+
 class AnalyzerStoreDialog(QDialog):
     """Filters, analyzers, downloadable models, and queue health in one window."""
 
@@ -972,6 +1052,8 @@ class AnalyzerStoreDialog(QDialog):
     refresh_requested = Signal()
     open_pack_folder_requested = Signal()
     install_pack_requested = Signal()
+    choose_vision_model_requested = Signal()
+    open_model_page_requested = Signal(str)
     uninstall_pack_requested = Signal(dict)
 
     def __init__(self, tokens: StudioTokens = TOKENS, parent: QWidget | None = None) -> None:
@@ -1011,7 +1093,8 @@ class AnalyzerStoreDialog(QDialog):
 
         self.tabs = QTabWidget(self)
         self.tabs.addTab(self._packs_tab(), "Filters")
-        self.tabs.addTab(self._models_tab(), "Model Store")
+        self.tabs.addTab(self._vision_tab(), "Tagging models")
+        self.tabs.addTab(self._models_tab(), "Chat models")
         self.tabs.addTab(self._analyzers_tab(), "Analyzers")
         outer.addWidget(self.tabs, 1)
 
@@ -1117,7 +1200,118 @@ class AnalyzerStoreDialog(QDialog):
             self.pack_rows.addWidget(card)
         self.pack_rows.addStretch(1)
 
-    # ── models tab ──────────────────────────────────────────────────────────
+    # ── tagging models tab ──────────────────────────────────────────────────
+
+    def _vision_tab(self) -> QWidget:
+        """Open-source vision models: what they do, and where they live.
+
+        Separate from the chat-model store on purpose. Tagging a library and
+        answering questions about it are different jobs with different right
+        answers, and the tab that says "pick a model" should not offer a 30 GB
+        language model for a job a 380 MB tagger does better and 100x faster.
+        """
+        tab = QWidget(self)
+        layout = QVBoxLayout(tab)
+        layout.setContentsMargins(0, 14, 0, 0)
+        layout.setSpacing(11)
+
+        self.vision_banner = QLabel("", tab)
+        self.vision_banner.setWordWrap(True)
+        self.vision_banner.setStyleSheet(
+            f"background:{self.tokens.brand_soft}; color:{self.tokens.brand};"
+            f"border-radius:{self.tokens.radius_md}px; padding:12px 15px;"
+            "font-size:11px; font-weight:600;"
+        )
+        layout.addWidget(self.vision_banner)
+
+        controls = QHBoxLayout()
+        controls.setSpacing(8)
+        self.vision_search = QLineEdit(tab)
+        self.vision_search.setPlaceholderText(
+            "Search tagging models — tags, nsfw, faces, objects, speech, timestamps…"
+        )
+        self.vision_search.setClearButtonEnabled(True)
+        self.vision_search.textChanged.connect(self._render_vision)
+        controls.addWidget(self.vision_search, 1)
+        self.vision_task = QComboBox(tab)
+        self.vision_task.addItem("Every kind")
+        self.vision_task.currentTextChanged.connect(self._render_vision)
+        controls.addWidget(self.vision_task)
+        choose = AnimatedButton(
+            "Use a model file…", variant="primary", icon_text="◎", tokens=self.tokens, parent=tab
+        )
+        choose.setToolTip("Point the local tagger at an .onnx file you downloaded")
+        choose.clicked.connect(self.choose_vision_model_requested)
+        controls.addWidget(choose)
+        layout.addLayout(controls)
+
+        self.vision_area = QScrollArea(tab)
+        self.vision_area.setWidgetResizable(True)
+        self.vision_host = QWidget(self.vision_area)
+        self.vision_rows = QVBoxLayout(self.vision_host)
+        self.vision_rows.setContentsMargins(2, 2, 8, 2)
+        self.vision_rows.setSpacing(9)
+        self.vision_area.setWidget(self.vision_host)
+        layout.addWidget(self.vision_area, 1)
+        self._placeholder(self.vision_rows, self.vision_host, "Loading models…")
+        return tab
+
+    def set_vision_state(self, state: dict[str, Any]) -> None:
+        """Catalogue rows, runtime availability, and the model in use."""
+        self.vision_state = state
+        tasks = [str(item) for item in (state.get("tasks") or [])]
+        if tasks and self.vision_task.count() <= 1:
+            self.vision_task.addItems([name.title() for name in tasks])
+        self._render_vision()
+
+    def _render_vision(self) -> None:
+        clear_layout(self.vision_rows)
+        state = getattr(self, "vision_state", None)
+        if not state:
+            self._placeholder(self.vision_rows, self.vision_host, "Loading models…")
+            return
+
+        runtimes = state.get("runtimes") or {}
+        active = str(state.get("model_path") or "")
+        if not runtimes.get("onnxruntime"):
+            self.vision_banner.setText(
+                "⚠  onnxruntime is not installed, so no local tagging model can run yet. "
+                "Install it with:   pip install onnxruntime-gpu   (or onnxruntime on CPU)"
+            )
+        elif active:
+            self.vision_banner.setText(
+                f"Tagging with {Path(active).name} — every video tag is recorded with the "
+                "second it was seen. No language model involved."
+            )
+        else:
+            self.vision_banner.setText(
+                "Local models tag without a language model: faster, offline, and they cannot "
+                "invent a label. Download one below, then choose “Use a model file…”. "
+                "Videos are tagged frame by frame, so every tag carries a timestamp."
+            )
+
+        query = self.vision_search.text().strip().lower()
+        chosen_task = self.vision_task.currentText()
+        rows = [row for row in (state.get("models") or []) if isinstance(row, dict)]
+        if chosen_task and chosen_task != "Every kind":
+            rows = [row for row in rows if str(row.get("task", "")).lower() == chosen_task.lower()]
+        if query:
+            rows = [
+                row
+                for row in rows
+                if query in " ".join(str(value) for value in row.values()).lower()
+            ]
+        if not rows:
+            self._placeholder(self.vision_rows, self.vision_host, "No models match that search.")
+            return
+        for row in rows:
+            card = VisionModelCard(row, self.tokens, self.vision_host)
+            card.open_requested.connect(self.open_model_page_requested)
+            card.use_requested.connect(self.choose_vision_model_requested)
+            self.vision_rows.addWidget(card)
+        self.vision_rows.addStretch(1)
+
+    # ── chat models tab ─────────────────────────────────────────────────────
 
     def _models_tab(self) -> QWidget:
         tab = QWidget(self)

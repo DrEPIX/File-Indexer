@@ -208,6 +208,17 @@ class IngestPipeline:
             self.config.library,
             cancel=self.cancel,
             on_error=lambda path, exc: self._record_error("scan", path, exc),
+            # Our own files are never library content, even when an operator
+            # has pointed the database at a folder inside a media root. The
+            # database file and the cache directory, not the folder holding
+            # them: someone may reasonably keep the index beside their photos.
+            never_descend=(
+                *(
+                    Path(str(self.config.storage.db_path) + suffix)
+                    for suffix in ("", "-wal", "-shm", "-journal")
+                ),
+                self.config.storage.derivatives_path,
+            ),
         )
         producer = BatchProducer(
             walker,
@@ -434,6 +445,7 @@ class IngestPipeline:
                 entry.path,
                 algorithm=self.config.scan.hash_algorithm,
                 chunk_size=self.config.scan.hash_chunk_size,
+                sample_above_bytes=self.config.scan.hash_sample_above_bytes,
             )
         except CorruptMedia as exc:
             self._record_error("file", entry.key, exc)

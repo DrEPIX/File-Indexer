@@ -19,6 +19,7 @@ wrong hemisphere, and nothing downstream can detect that.
 from __future__ import annotations
 
 import logging
+import threading
 from fractions import Fraction
 from pathlib import Path
 from typing import Any
@@ -27,9 +28,50 @@ from ...errors import CorruptMedia
 from ...util import coerce_float, coerce_int, parse_datetime, to_iso
 from .base import Extracted, GpsFix
 
-__all__ = ["extract_image", "extract_with_pillow", "from_exiftool", "decode_exif_gps"]
+__all__ = [
+    "extract_image",
+    "extract_with_pillow",
+    "from_exiftool",
+    "decode_exif_gps",
+    "preload_pillow",
+]
 
 _LOG = logging.getLogger(__name__)
+
+_PILLOW_LOADED = False
+_PILLOW_LOCK = threading.Lock()
+
+
+def preload_pillow() -> None:
+    """Import every Pillow codec now, on one thread, before the pools start.
+
+    ``Image.open()`` imports the plugin for a file's format the first time it
+    meets one. Several reader threads opening a JPEG at the same moment
+    therefore run several concurrent imports, and on Python 3.13 that
+    deadlocks on the per-module import lock: the scan wedges permanently with
+    every worker parked in ``_lock_unlock_module``, the GUI shows a job that
+    never advances, and the only way out is to kill the process.
+
+    ``Image.init()`` does that importing eagerly and idempotently. Calling it
+    once from the main thread — and once in each worker process — costs a few
+    milliseconds and removes the race entirely.
+    """
+    global _PILLOW_LOADED
+    from PIL import Image, ImageFile
+
+    # One uncontended lock acquisition per call, rather than a double-checked
+    # fast path: this runs once per scan and per worker, and the lock is the
+    # entire reason the function exists.
+    with _PILLOW_LOCK:
+        if _PILLOW_LOADED:
+            return
+        Image.init()
+        # Set here as well as at the call site: a worker that reaches
+        # `Image.open` before any extractor ran would otherwise reject a
+        # truncated file the scan is expected to salvage.
+        ImageFile.LOAD_TRUNCATED_IMAGES = True
+        _PILLOW_LOADED = True
+
 
 # EXIF tag numbers. Named constants because `0x829a` at a call site is
 # unreadable and mistyping one silently loses a field.

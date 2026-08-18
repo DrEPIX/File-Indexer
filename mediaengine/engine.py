@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any
 
 from .config import Config, load_config
 from .core.control import CancelToken, ProgressCallback
+from .core.extractors.images import preload_pillow
 from .core.pipeline import IngestPipeline, ScanResult
 from .db.connection import Database
 from .db.repositories import Repositories
@@ -75,6 +76,10 @@ class MediaEngine:
             if self._started:
                 return self
             self.config.ensure_directories()
+            # Before any pool exists, on whichever thread called start(). Doing
+            # it later means several reader threads racing to import the same
+            # Pillow codec, which deadlocks rather than merely repeating work.
+            preload_pillow()
             self._db = Database(
                 self.config.storage.db_path,
                 writer_queue_size=self.config.workers.writer_queue_size,

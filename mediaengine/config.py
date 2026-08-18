@@ -109,6 +109,14 @@ class ScanConfig(BaseModel):
 
     hash_algorithm: Literal["blake3", "sha256"] = "blake3"
     hash_chunk_size: int = Field(default=4 * 1024 * 1024, ge=4096)
+    hash_sample_above_bytes: int = Field(
+        default=2 * 1024**3,
+        ge=0,
+        description=(
+            "Files larger than this are identified from their size plus spaced "
+            "samples instead of every byte. 0 always reads the whole file."
+        ),
+    )
     compute_perceptual_hash: bool = True
     extract_gps: bool = True
     extract_document_text: bool = True
@@ -117,6 +125,15 @@ class ScanConfig(BaseModel):
     video_keyframe_max: int = Field(default=64, ge=1)
     video_scene_detection: bool = True
     video_scene_threshold: float = Field(default=0.4, gt=0, lt=1)
+    video_scene_max_duration_s: float = Field(
+        default=1800.0,
+        ge=0,
+        description=(
+            "Skip scene detection on videos longer than this. Detection decodes "
+            "the whole file, so a three-hour recording costs more than the cuts "
+            "are worth. 0 disables the limit."
+        ),
+    )
     detect_sidecars: bool = True
     detect_motion_photos: bool = True
     batch_size: int = Field(default=256, ge=1, description="Paths per walker batch.")

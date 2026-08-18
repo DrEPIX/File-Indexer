@@ -38,8 +38,14 @@ of it:
   time. `filters.genre` sorts videos into movies, shows, gameshows, news,
   sport, games, memes, art, live TV, recorded TV and adult; the sport, format,
   animation, origin and NSFW packs sort along their own axes. Each value
-  becomes a search filter and a facet. Vision packs need a local model from the
-  Model Store tab. See [filter packs](docs/FILTER_PACKS.md).
+  becomes a search filter and a facet. See [filter packs](docs/FILTER_PACKS.md).
+- **AI Analyzer Store ▸ Tagging models** catalogues open-source vision models
+  by job — tagging, NSFW, detection, faces, scenes, speech, audio, OCR — with a
+  link to each project, what it would emit, and whether it runs in-process.
+  Point `local.vision-tagger` at a downloaded `.onnx` file and tagging runs
+  locally with **no language model and nothing else running**, and every tag on
+  a video carries the timestamp it was seen at. See
+  [local AI tagging](docs/AI_TAGGING.md).
 
 The stable classic interface remains available through **`Start File Indexer
 V1.bat`**; Studio is an additional frontend and does not overwrite it.

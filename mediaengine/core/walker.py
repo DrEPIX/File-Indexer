@@ -135,6 +135,15 @@ def _is_hidden(entry: os.DirEntry[str], name: str) -> bool:
     return bool(attributes & stat_module.FILE_ATTRIBUTE_HIDDEN)  # type: ignore[attr-defined]
 
 
+
+def _resolve_quietly(path: Path) -> Path:
+    """Resolve without raising on a path that does not exist yet."""
+    try:
+        return path.resolve()
+    except OSError:  # pragma: no cover - unreadable mount
+        return path
+
+
 class Walker:
     """Produces candidate files for one or more library roots."""
 
@@ -144,6 +153,7 @@ class Walker:
         *,
         on_error: WalkErrorHandler | None = None,
         cancel: CancelToken | None = None,
+        never_descend: Sequence[Path] | None = None,
     ) -> None:
         self.config = config
         self.matcher = GlobMatcher(config.include, config.exclude)
@@ -151,6 +161,14 @@ class Walker:
         self._on_error = on_error
         self._cancel = CancelToken() if cancel is None else cancel
         self._last_completed: str | None = None
+        #: Directories that are skipped whatever the globs say. The engine's
+        #: own database and preview cache go here: a library kept inside a
+        #: media folder would otherwise be indexed as media, filling the grid
+        #: with thumbnails of thumbnails and a copy of the database that is
+        #: growing as it is read.
+        self._never_descend: tuple[Path, ...] = tuple(
+            _resolve_quietly(path) for path in (never_descend or ())
+        )
 
     # ── traversal ───────────────────────────────────────────────────────────
 
@@ -303,6 +321,9 @@ class Walker:
             if is_dir:
                 if max_depth is not None and depth >= max_depth:
                     continue
+                if self._is_ours(child):
+                    self.stats.skipped_excluded += 1
+                    continue
                 if self.matcher.excludes_dir(relative):
                     self.stats.skipped_excluded += 1
                     continue
@@ -321,6 +342,11 @@ class Walker:
 
             self.stats.files_seen += 1
 
+            if self._is_ours(child):
+                # A database or preview cache sitting directly in a media
+                # folder, rather than in its own subdirectory.
+                self.stats.skipped_excluded += 1
+                continue
             if not self.matcher.matches_file(relative):
                 self.stats.skipped_excluded += 1
                 continue
@@ -333,6 +359,15 @@ class Walker:
             files.append(WalkEntry(path=child, stat=info, root=root))
 
         return subdirs, files
+
+    def _is_ours(self, child: Path) -> bool:
+        """Whether this path is the engine's own storage rather than media."""
+        if not self._never_descend:
+            return False
+        resolved = _resolve_quietly(child)
+        return any(
+            resolved == owned or owned in resolved.parents for owned in self._never_descend
+        )
 
     def _may_descend(
         self,

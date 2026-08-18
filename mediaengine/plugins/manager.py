@@ -21,6 +21,10 @@ from .models import ModelLibrary
 #: The one analyzer whose behaviour depends on a separately-installed model.
 LM_STUDIO_ID = "local.lm-studio"
 
+#: The local ONNX tagger. Also model-dependent, but the model is a file on
+#: disk rather than a service, which is what makes it work with nothing running.
+LOCAL_TAGGER_ID = "local.vision-tagger"
+
 
 @dataclass(frozen=True, slots=True)
 class RegistrationResult:
@@ -216,6 +220,54 @@ class PluginManager:
                     }
                 )
         return groups
+
+    def vision_models(self) -> dict[str, Any]:
+        """The open-source tagging models, and which one is in use.
+
+        Tagging models are catalogued rather than served: the engine does not
+        host them, download them, or pick for you. What it can do is say what
+        each one would emit, whether it runs in-process, and — the question
+        nobody can answer from a model card — whether the runtime that executes
+        it is actually installed here.
+        """
+        from ..models import CATALOG, installed_runtimes, tasks
+
+        settings = self.config.plugin_config(LOCAL_TAGGER_ID)
+        return {
+            "models": [item.as_dict() for item in CATALOG],
+            "tasks": tasks(),
+            "runtimes": installed_runtimes(),
+            "model_path": str(settings.get("model_path") or ""),
+            "labels_path": str(settings.get("labels_path") or ""),
+            "enabled": self.config.plugins.is_enabled(LOCAL_TAGGER_ID),
+            "plugin_id": LOCAL_TAGGER_ID,
+        }
+
+    def use_vision_model(
+        self, model_path: str, *, labels_path: str = "", enable: bool = True
+    ) -> dict[str, Any]:
+        """Point the local tagger at a downloaded model and switch it on.
+
+        Choosing a model is the same act as adopting it — the alternative is a
+        store that congratulates you on a choice that then does nothing until
+        you find the analyzer and enable it separately.
+        """
+        settings = dict(self.config.plugin_config(LOCAL_TAGGER_ID))
+        settings["model_path"] = str(model_path)
+        if labels_path:
+            settings["labels_path"] = str(labels_path)
+        else:
+            settings.pop("labels_path", None)
+        settings.setdefault("threshold", 0.35)
+        settings.setdefault("max_frames", 12)
+        self.configure(LOCAL_TAGGER_ID, settings)
+        if enable:
+            self.set_enabled(LOCAL_TAGGER_ID, True)
+        return {
+            "plugin_id": LOCAL_TAGGER_ID,
+            "model_path": str(model_path),
+            "enabled": self.config.plugins.is_enabled(LOCAL_TAGGER_ID),
+        }
 
     def model_store(self, *, vision_only: bool = False) -> dict[str, Any]:
         """Everything the Model Store tab renders, in one background call."""

@@ -256,3 +256,45 @@ class TestBatchProducer:
         producer.start()
         producer.stop()
         producer.stop()
+
+
+def test_the_engines_own_library_is_never_indexed_as_media(tmp_path: Path) -> None:
+    """A library kept inside a media folder must not index itself.
+
+    Observed in the wild: the database sat in a folder inside the media root,
+    so a scan swallowed its own thumbnails and a copy of the database file
+    while that file was still being written.
+    """
+    root = tmp_path / "media"
+    (root / "Index" / "File Indexer Library" / "derivatives").mkdir(parents=True)
+    (root / "holiday.jpg").write_bytes(b"\xff\xd8\xff" + b"0" * 64)
+    (root / "Index" / "File Indexer Library" / "library.db").write_bytes(b"SQLite format 3\x00")
+    (root / "Index" / "File Indexer Library" / "derivatives" / "thumb.webp").write_bytes(b"x" * 32)
+    (root / "loose.db").write_bytes(b"SQLite format 3\x00")
+
+    walker = Walker(
+        LibraryConfig(roots=[root], min_file_size=0),
+        never_descend=[
+            root / "Index" / "File Indexer Library" / "library.db",
+            root / "Index" / "File Indexer Library" / "derivatives",
+        ],
+    )
+    found = {entry.path.name for entry in walker.iter_entries(root)}
+
+    # Precisely our own files: the folder that holds them may be somewhere the
+    # user also keeps media, so excluding the whole folder would lose real work.
+    assert found == {"holiday.jpg", "loose.db"}
+    assert walker.stats.skipped_excluded >= 1
+
+
+def test_a_database_file_directly_in_a_media_folder_is_skipped(tmp_path: Path) -> None:
+    root = tmp_path / "media"
+    root.mkdir()
+    (root / "clip.mp4").write_bytes(b"0" * 64)
+    (root / "library.db").write_bytes(b"SQLite format 3\x00")
+
+    walker = Walker(
+        LibraryConfig(roots=[root], min_file_size=0),
+        never_descend=[root / "library.db"],
+    )
+    assert {entry.path.name for entry in walker.iter_entries(root)} == {"clip.mp4"}

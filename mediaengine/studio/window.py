@@ -1323,6 +1323,8 @@ class StudioWindow(QMainWindow):
         dialog.open_pack_folder_requested.connect(self.open_pack_folder)
         dialog.install_pack_requested.connect(self.install_filter_pack)
         dialog.uninstall_pack_requested.connect(self.uninstall_filter_pack)
+        dialog.choose_vision_model_requested.connect(self.choose_vision_model)
+        dialog.open_model_page_requested.connect(self.open_model_page)
         dialog.finished.connect(lambda _: setattr(self, "analyzer_dialog", None))
         self.analyzer_dialog = dialog
         dialog.open()
@@ -1340,6 +1342,7 @@ class StudioWindow(QMainWindow):
                 "catalog": manager.catalog(),
                 "models": manager.model_store(),
                 "packs": manager.filter_packs(),
+                "vision": manager.vision_models(),
             }
 
         worker = EngineWorker(load)
@@ -1359,6 +1362,9 @@ class StudioWindow(QMainWindow):
         packs = payload.get("packs")
         if isinstance(packs, dict):
             self.analyzer_dialog.set_pack_state(packs)
+        vision = payload.get("vision")
+        if isinstance(vision, dict):
+            self.analyzer_dialog.set_vision_state(vision)
 
     def open_pack_folder(self) -> None:
         """Reveal the folder where a user's own filter packs live."""
@@ -1430,6 +1436,51 @@ class StudioWindow(QMainWindow):
         self.show_toast(f"{name} deleted.")
         self.refresh_analyzer_catalog()
         self.refresh_facets()
+
+    def open_model_page(self, url: str) -> None:
+        """Open a model's own repository in the browser."""
+        if url.startswith("https://"):
+            QDesktopServices.openUrl(QUrl(url))
+
+    def choose_vision_model(self) -> None:
+        """Adopt a downloaded ONNX tagging model for local, offline tagging."""
+        chosen, _filter = QFileDialog.getOpenFileName(
+            self, "Choose a tagging model", str(Path.home()), "ONNX models (*.onnx)"
+        )
+        if not chosen:
+            return
+        model = Path(chosen)
+        labels = ""
+        # A model's scores are meaningless without its label list, and the two
+        # are shipped together often enough to try before asking.
+        if not any(
+            model.with_name(name).is_file()
+            for name in ("selected_tags.csv", "labels.txt", "classes.txt", "labels.json")
+        ):
+            picked, _also = QFileDialog.getOpenFileName(
+                self,
+                f"Choose the label list for {model.name}",
+                str(model.parent),
+                "Label lists (*.csv *.txt *.json)",
+            )
+            if not picked:
+                self.show_toast("A tagging model needs its label list. Nothing changed.")
+                return
+            labels = picked
+
+        def work() -> dict[str, Any]:
+            from ..plugins import PluginManager
+
+            return PluginManager(self.engine).use_vision_model(str(model), labels_path=labels)
+
+        worker = EngineWorker(work)
+        worker.signals.result.connect(lambda _: self._vision_model_chosen(model.name))
+        worker.signals.error.connect(self._show_worker_error)
+        self._start_worker(worker)
+
+    def _vision_model_chosen(self, name: str) -> None:
+        self.show_toast(f"Tagging with {name}. Run it from the Analyzers tab.")
+        self.refresh_analyzer_catalog()
 
     def toggle_analyzer(self, row: dict[str, object]) -> None:
         if self.scan_running or self.analysis_running:

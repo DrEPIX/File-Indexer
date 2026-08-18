@@ -77,4 +77,25 @@ def load_desktop_config(path: Path | None = None) -> Config:
         config = _new_config(selected)
         save_desktop_config(config, selected)
     config.logging.console = False
+    if _repair_log_location(config):
+        save_desktop_config(config, selected)
     return config
+
+
+def _repair_log_location(config: Config) -> bool:
+    """Move the log back beside the library if it points somewhere disposable.
+
+    A config can end up naming a log inside ``%TEMP%`` — a packaged smoke test,
+    an installer, or a library that was relocated while a temporary config was
+    live. Windows then clears that directory and the desktop writes its
+    diagnostics into a folder that no longer exists, which is precisely the
+    situation where someone needs the log to explain why the app is
+    misbehaving. Returns whether anything changed.
+    """
+    from ..maintenance import is_temporary_location
+
+    current = config.logging.file
+    if current is None or not is_temporary_location(current):
+        return False
+    config.logging.file = config.storage.db_path.parent / "engine.log"
+    return True

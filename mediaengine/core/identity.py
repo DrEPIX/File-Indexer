@@ -40,6 +40,8 @@ __all__ = [
     "Detection",
     "hash_file",
     "hash_bytes",
+    "sample_hash_file",
+    "SAMPLE_CHUNKS",
     "detect_media_type",
     "sniff_bytes",
     "perceptual_hash",
@@ -58,6 +60,11 @@ HEAD_BYTES: Final[int] = 4096
 
 #: Algorithm name -> the prefix written into ``assets.content_hash``.
 _HASH_PREFIX: Final[dict[str, str]] = {"blake3": "b3", "sha256": "sha256"}
+
+#: How many spaced chunks :func:`sample_hash_file` reads. Sixteen 4 MiB windows
+#: is 64 MiB per file regardless of size — a bounded cost that keeps a 90 GB
+#: video from monopolising a scan.
+SAMPLE_CHUNKS: Final[int] = 16
 
 #: Extensions that denote a camera raw file. Used by the sniffer to pick a
 #: flavour once the TIFF/other signature is confirmed, and by
@@ -253,6 +260,11 @@ class HashResult:
     """First :data:`HEAD_BYTES` of the file, so the sniffer needs no second
     read of a file already streamed through the hasher."""
 
+    sampled: bool = False
+    """Whether the digest covers spaced samples rather than every byte. The
+    ``s`` in the hash prefix says the same thing to anything reading the
+    database; this says it to code holding the result."""
+
 
 @dataclass(frozen=True, slots=True)
 class Detection:
@@ -296,6 +308,7 @@ def hash_file(
     algorithm: str = "blake3",
     chunk_size: int = 4 * 1024 * 1024,
     progress: Callable[[int], None] | None = None,
+    sample_above_bytes: int = 0,
 ) -> HashResult:
     """Stream a file through the hasher, capturing its head on the way.
 
@@ -304,10 +317,25 @@ def hash_file(
     the caller invariably wants to sniff the file it just hashed, and a second
     open is a second seek on a spinning disk.
 
+    ``sample_above_bytes`` switches very large files to
+    :func:`sample_hash_file`, which reads a fixed number of chunks instead of
+    every byte. Pass 0 to always read the whole file.
+
     :raises CorruptMedia: the file vanished or became unreadable mid-read. The
         scan treats that as a per-file error rather than aborting.
     """
     target = Path(path)
+    if sample_above_bytes > 0:
+        try:
+            size = target.stat().st_size
+        except OSError as exc:
+            raise CorruptMedia(f"{target}: unreadable during hashing: {exc}") from exc
+        if size > sample_above_bytes:
+            return sample_hash_file(
+                target, algorithm=algorithm, chunk_size=chunk_size, size_bytes=size,
+                progress=progress,
+            )
+
     effective, hasher = _new_hasher(algorithm)
     total = 0
     head = b""
@@ -330,6 +358,71 @@ def hash_file(
         algorithm=effective,
         size_bytes=total,
         head=head,
+    )
+
+
+def sample_hash_file(
+    path: Path | str,
+    *,
+    algorithm: str = "blake3",
+    chunk_size: int = 4 * 1024 * 1024,
+    size_bytes: int | None = None,
+    samples: int = SAMPLE_CHUNKS,
+    progress: Callable[[int], None] | None = None,
+) -> HashResult:
+    """Identify a huge file from its size plus evenly spaced chunks.
+
+    Reading every byte of a 90 GB video to decide whether it is already
+    indexed costs minutes of disk time and buys almost nothing: the exact size
+    plus 16 chunks spread through the file — 64 MB read instead of 90 GB —
+    distinguishes any two files a media library will ever contain. Two
+    different videos would have to agree on their byte count *and* on every
+    sampled window to collide.
+
+    The digest is prefixed differently (``b3s:`` rather than ``b3:``) because a
+    sampled identity is a different claim from a full one. Nothing has to guess
+    which it is looking at, and a library can hold both without a full hash and
+    a sampled hash of the same bytes ever being mistaken for each other.
+    """
+    target = Path(path)
+    effective, hasher = _new_hasher(algorithm)
+    try:
+        size = target.stat().st_size if size_bytes is None else size_bytes
+    except OSError as exc:
+        raise CorruptMedia(f"{target}: unreadable during hashing: {exc}") from exc
+
+    # The size goes in first, so two files whose sampled windows happen to
+    # match still differ unless they are byte-for-byte the same length.
+    hasher.update(f"{size}:".encode("ascii"))
+    read = 0
+    head = b""
+    span = max(1, samples - 1)
+    try:
+        with open(long_path(target), "rb") as handle:
+            for index in range(samples):
+                # Last sample is anchored at the tail, so a file truncated or
+                # appended to at the end never hashes the same.
+                offset = min(
+                    max(0, size - chunk_size), (size - chunk_size) * index // span if size > chunk_size else 0
+                )
+                handle.seek(offset)
+                chunk = handle.read(chunk_size)
+                if not chunk:
+                    break
+                if not head:
+                    head = chunk[:HEAD_BYTES]
+                hasher.update(chunk)
+                read += len(chunk)
+                if progress is not None:
+                    progress(read)
+    except OSError as exc:
+        raise CorruptMedia(f"{target}: unreadable during hashing: {exc}") from exc
+    return HashResult(
+        content_hash=f"{_HASH_PREFIX[effective]}s:{hasher.hexdigest()}",
+        algorithm=effective,
+        size_bytes=size,
+        head=head,
+        sampled=True,
     )
 
 

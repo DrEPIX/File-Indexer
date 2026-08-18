@@ -33,6 +33,68 @@ across frames; objects retain their bounding box and timestamp; safety uses the
 highest-risk sampled frame for the asset rating and stores timestamped review
 evidence. This is bounded sampling, not frame-perfect event detection.
 
+## Tagging without a language model — `local.vision-tagger`
+
+The fastest path, and the one that keeps working when nothing else is running.
+This analyzer drives an ONNX vision model **in this process**: no server, no
+LM Studio, no network, and no possibility of a label outside the model's own
+list. A language model is then free to do the thing only it can do — answer
+questions in the assistant — instead of being asked to label 40,000 frames one
+HTTP round trip at a time.
+
+Open **AI Analyzer Store ▸ Tagging models** (`Ctrl+M`). The tab lists
+open-source models by job — tagging, NSFW, detection, faces, scenes, speech,
+audio, OCR — with what each one would emit, whether it runs in-process, its
+licence, and a link to its repository. Nothing downloads automatically; a
+model is a large file from the internet and that decision stays with you.
+
+Once you have a `.onnx` file, choose **Use a model file…** and pick it. If its
+label list is not beside it (`selected_tags.csv`, `labels.txt`, `classes.txt`
+or `labels.json`), you are asked for that too — a model's scores are
+meaningless without the list of what they are scores for, and a list that is
+off by one row mislabels an entire library without looking broken.
+
+Install the runtime once:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install onnxruntime-gpu   # NVIDIA
+.\.venv\Scripts\python.exe -m pip install onnxruntime       # CPU
+```
+
+### Video tags carry timestamps
+
+The scan already extracts keyframes with their times, so a video is tagged
+frame by frame. Every claim is stored against `regions.frame_time`, which is
+what makes "where in this video" answerable rather than only "is it in this
+video". Each run produces two kinds of annotation:
+
+* **per frame** — one claim per label per keyframe, carrying the second it was
+  seen and the model that saw it;
+* **per asset** — the same labels once more without a timestamp, so a search
+  finds the video without having to know which second to ask about.
+
+`min_frames` keeps a glimpse out of the facets: a label seen in one frame of
+forty is not what the video is about. `max_frames` bounds the cost on a
+feature-length file.
+
+Per-plugin configuration (`plugins.per_plugin."local.vision-tagger"`):
+
+| Key | Default | Meaning |
+|---|---|---|
+| `model_path` | — | The `.onnx` file. Required. |
+| `labels_path` | beside the model | One label per output score. |
+| `namespace` | `content.tag` | Where claims land, and therefore the facet. |
+| `threshold` | `0.35` | Minimum score recorded. |
+| `top_k` | `12` | Most labels kept per frame, whatever the threshold. |
+| `max_frames` | `12` | Keyframes sampled per video. |
+| `min_frames` | `1` | Frames a label needs before it describes the asset. |
+| `activation` | `auto` | `sigmoid`, `softmax`, `none`, or inferred. |
+| `normalize` / `bgr` / `scale` | `false` / `false` / `true` | Preprocessing the model expects. |
+
+Input size and tensor layout (NCHW or NHWC) are read from the model's own
+signature, because someone downloading a model from a repository does not know
+its layout and should not have to.
+
 ## Run the complete stack
 
 CPU:
