@@ -16,6 +16,7 @@ from __future__ import annotations
 import base64
 import io
 import json
+import logging
 import re
 from collections.abc import Mapping, Sequence
 from pathlib import Path
@@ -29,6 +30,8 @@ if TYPE_CHECKING:
     from PIL.Image import Image
 
 __all__ = ["LmStudioAnalyzer", "LmStudioClient", "message_text", "strip_reasoning"]
+
+_LOG = logging.getLogger(__name__)
 
 PLUGIN_ID = "local.lm-studio"
 DEFAULT_BASE_URL = "http://127.0.0.1:1234/v1"
@@ -50,6 +53,66 @@ _THINK_BLOCK = re.compile(r"<(think|thinking|reasoning)>.*?</\1>", re.DOTALL | r
 def _base_url(value: object) -> str:
     base = str(value or DEFAULT_BASE_URL).rstrip("/")
     return base if base.endswith("/v1") else f"{base}/v1"
+
+
+#: Ports LM Studio actually uses. It remembers the last port it was started on
+#: rather than always taking 1234, so a server that once moved stays moved —
+#: and a configuration written on the day it was 1234 silently stops working.
+CANDIDATE_PORTS: tuple[int, ...] = (1234, 1235, 1236, 8080)
+
+
+def discover_base_url(configured: str = DEFAULT_BASE_URL, *, timeout_s: float = 2.0) -> str | None:
+    """Find the port LM Studio's server is really on, or ``None``.
+
+    Asks the ``lms`` CLI first — it knows authoritatively and answers in
+    milliseconds — then falls back to probing the handful of ports LM Studio
+    uses. A 401 counts as found: a server demanding a token is running, and
+    telling the user to start it would send them in the wrong direction.
+    """
+    import socket
+    from urllib.parse import urlparse
+
+    def listening(port: int) -> bool:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+            probe.settimeout(timeout_s)
+            return probe.connect_ex(("127.0.0.1", port)) == 0
+
+    parsed = urlparse(_base_url(configured))
+    ports: list[int] = []
+    if parsed.port:
+        ports.append(parsed.port)
+    reported = _cli_port(timeout_s=timeout_s)
+    if reported is not None and reported not in ports:
+        ports.append(reported)
+    ports.extend(port for port in CANDIDATE_PORTS if port not in ports)
+
+    for port in ports:
+        if listening(port):
+            return f"http://127.0.0.1:{port}/v1"
+    return None
+
+
+def _cli_port(*, timeout_s: float = 2.0) -> int | None:
+    """The port ``lms server status`` reports, if the CLI is installed."""
+    import subprocess
+
+    from ..models import find_lms_cli
+
+    executable = find_lms_cli()
+    if executable is None:
+        return None
+    try:
+        completed = subprocess.run(
+            [str(executable), "server", "status"],
+            capture_output=True,
+            timeout=max(2.0, timeout_s * 3),
+            check=False,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    found = re.search(r"port\s+(\d{2,5})", completed.stdout.decode("utf-8", "replace"))
+    return int(found.group(1)) if found else None
 
 
 def strip_reasoning(text: str) -> str:
@@ -114,6 +177,9 @@ class LmStudioClient:
         self.base_url = _base_url(base_url)
         self.api_token = api_token or None
         self.timeout_s = timeout_s
+        #: One rediscovery per client. A server that is genuinely down
+        #: should fail fast rather than re-probe four ports per request.
+        self._searched = False
 
     def _request_json(
         self, method: str, path: str, payload: dict[str, Any] | None = None
@@ -136,12 +202,33 @@ class LmStudioClient:
             response.raise_for_status()
             value = response.json()
         except (httpx.TimeoutException, httpx.NetworkError) as exc:
+            # Nothing answered here. The server may simply be on another port:
+            # LM Studio reuses whichever port it was last started on, so a
+            # configuration written when it was 1234 stops working the day it
+            # isn't. Look, and retry once against what we find.
+            moved = discover_base_url(self.base_url) if not self._searched else None
+            self._searched = True
+            if moved and moved != self.base_url:
+                _LOG.info("LM Studio found at %s, not %s", moved, self.base_url)
+                self.base_url = moved
+                return self._request_json(method, path, payload)
             raise PluginUnavailable(
-                f"LM Studio is not reachable at {self.base_url}: {exc}",
+                f"LM Studio is not reachable at {self.base_url}: {exc}. "
+                "Open LM Studio and start its local server (Developer tab > Status: Running).",
                 plugin_id=PLUGIN_ID,
             ) from exc
         except httpx.HTTPStatusError as exc:
             detail = exc.response.text[:500]
+            if exc.response.status_code in (401, 403):
+                # The server is up and refusing us specifically. Saying "not
+                # reachable" here is what sends someone off restarting an
+                # application that was working the whole time.
+                raise PluginUnavailable(
+                    f"LM Studio is running at {self.base_url} but requires an API token. "
+                    "Either paste one into the LM Studio settings in Studio, or turn off "
+                    '"Require API key" in LM Studio under Developer > Settings.',
+                    plugin_id=PLUGIN_ID,
+                ) from exc
             raise PluginExecutionError(
                 f"LM Studio returned HTTP {exc.response.status_code}: {detail}",
                 plugin_id=PLUGIN_ID,

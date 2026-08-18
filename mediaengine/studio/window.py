@@ -1850,11 +1850,19 @@ class StudioWindow(QMainWindow):
             self.show_toast("Wait for the current background job first.")
             return
         current = self.config.plugin_config(LM_STUDIO_ID)
+        from ..plugins.builtin.lm_studio import discover_base_url
+
+        configured = str(current.get("base_url") or "http://127.0.0.1:1234")
+        # LM Studio reuses whichever port it was last started on, so the
+        # configured one goes stale without anything having been changed.
+        # Offer what is actually listening rather than what was true once.
+        detected = discover_base_url(configured)
         base_url, accepted = QInputDialog.getText(
             self,
             "LM Studio server",
-            "LM Studio server URL:",
-            text=str(current.get("base_url") or "http://127.0.0.1:1234"),
+            "LM Studio server URL:"
+            + ("" if not detected else f"\n\nDetected a server at {detected}"),
+            text=detected or configured,
         )
         if not accepted or not base_url.strip():
             return

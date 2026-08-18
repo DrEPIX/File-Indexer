@@ -4,6 +4,7 @@ from typing import Any
 
 import pytest
 
+from mediaengine.errors import PluginUnavailable
 from mediaengine.plugins.builtin import lm_studio
 from mediaengine.plugins.builtin.lm_studio import LmStudioAnalyzer, LmStudioClient
 
@@ -73,3 +74,116 @@ def test_lm_studio_analyzer_emits_safe_searchable_annotations(
     assert FakeClient.last_request is not None
     assert FakeClient.last_request["response_format"]["type"] == "json_schema"
     assert FakeClient.last_request["stream"] is False
+
+
+# ── finding a server that moved ──────────────────────────────────────────────
+
+
+def test_a_server_on_another_port_is_found(monkeypatch: pytest.MonkeyPatch) -> None:
+    """LM Studio reuses its last port, so 1234 goes stale on its own."""
+    import socket
+
+    from mediaengine.plugins.builtin import lm_studio
+
+    class _Probe:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            pass
+
+        def __enter__(self) -> "_Probe":
+            return self
+
+        def __exit__(self, *exc: object) -> None:
+            return None
+
+        def settimeout(self, value: float) -> None:
+            return None
+
+        def connect_ex(self, address: tuple[str, int]) -> int:
+            return 0 if address[1] == 1235 else 1
+
+    monkeypatch.setattr(socket, "socket", _Probe)
+    monkeypatch.setattr(lm_studio, "_cli_port", lambda **_kwargs: None)
+    assert lm_studio.discover_base_url("http://127.0.0.1:1234") == "http://127.0.0.1:1235/v1"
+
+
+def test_nothing_listening_reports_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+    import socket
+
+    from mediaengine.plugins.builtin import lm_studio
+
+    class _Closed:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            pass
+
+        def __enter__(self) -> "_Closed":
+            return self
+
+        def __exit__(self, *exc: object) -> None:
+            return None
+
+        def settimeout(self, value: float) -> None:
+            return None
+
+        def connect_ex(self, address: tuple[str, int]) -> int:
+            return 1
+
+    monkeypatch.setattr(socket, "socket", _Closed)
+    monkeypatch.setattr(lm_studio, "_cli_port", lambda **_kwargs: None)
+    assert lm_studio.discover_base_url("http://127.0.0.1:1234") is None
+
+
+def test_the_cli_is_asked_before_ports_are_guessed(monkeypatch: pytest.MonkeyPatch) -> None:
+    import socket
+
+    from mediaengine.plugins.builtin import lm_studio
+
+    asked: list[str] = []
+
+    class _Only4321:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            pass
+
+        def __enter__(self) -> "_Only4321":
+            return self
+
+        def __exit__(self, *exc: object) -> None:
+            return None
+
+        def settimeout(self, value: float) -> None:
+            return None
+
+        def connect_ex(self, address: tuple[str, int]) -> int:
+            return 0 if address[1] == 4321 else 1
+
+    monkeypatch.setattr(socket, "socket", _Only4321)
+    monkeypatch.setattr(
+        lm_studio, "_cli_port", lambda **_kwargs: (asked.append("cli"), 4321)[1]
+    )
+    # A port nobody would have guessed is found because the CLI knows it.
+    assert lm_studio.discover_base_url("http://127.0.0.1:1234") == "http://127.0.0.1:4321/v1"
+    assert asked == ["cli"]
+
+
+def test_a_token_requirement_is_not_reported_as_a_dead_server() -> None:
+    """"Not reachable" sends someone off restarting an app that was fine."""
+    import httpx
+
+    client = LmStudioClient("http://127.0.0.1:1234")
+
+    def refuse(*_args: object, **_kwargs: object) -> httpx.Response:
+        return httpx.Response(401, json={"error": {"message": "token required"}})
+
+    transport = httpx.MockTransport(lambda request: refuse())
+    original = httpx.Client
+
+    class _Patched(original):  # type: ignore[misc, valid-type]
+        def __init__(self, **kwargs: object) -> None:
+            kwargs["transport"] = transport
+            super().__init__(**kwargs)  # type: ignore[arg-type]
+
+    httpx.Client = _Patched  # type: ignore[misc]
+    try:
+        with pytest.raises(PluginUnavailable, match="requires an API token"):
+            client.models()
+    finally:
+        httpx.Client = original  # type: ignore[misc]
